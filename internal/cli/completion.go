@@ -48,7 +48,7 @@ func newCompletionCommand(root *cobra.Command) *cobra.Command {
 		},
 	})
 
-	completion.RunE = func(cmd *cobra.Command, _ []string) error {
+	completion.RunE = func(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("specify a shell: bash, zsh, fish, or powershell")
 	}
 

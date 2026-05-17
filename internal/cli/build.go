@@ -1,3 +1,4 @@
+// Package cli builds the authnet command tree and local command behavior.
 package cli
 
 const (

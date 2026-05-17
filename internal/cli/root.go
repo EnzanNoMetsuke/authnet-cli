@@ -14,6 +14,7 @@ type globalOptions struct {
 	NoColor    bool
 }
 
+// NewRootCommand builds the root authnet command with local-only scaffold behavior.
 func NewRootCommand(info BuildInfo) *cobra.Command {
 	build := info.normalized()
 	options := &globalOptions{}

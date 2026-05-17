@@ -21,6 +21,10 @@ Issues live in Linear; use the repo's Linear workflow rather than GitHub, GitLab
 
 Follow the mandatory issue, verification, commit, and tracker-update workflow in `docs/agents/workflow.md`.
 
+### Linting
+
+Use the project linting workflow in `docs/agents/linting.md`.
+
 ### Upstream MCP access
 
 Use the `mcpproxy` MCP server to discover and call upstream MCP servers. First call `retrieve_tools` for the upstream capability you need, then call the exact returned tool name with `call_tool_read`, `call_tool_write`, or `call_tool_destructive` according to the operation. Include a clear intent reason and data-sensitivity classification.

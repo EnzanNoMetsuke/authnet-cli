@@ -1,3 +1,4 @@
+// Package main provides the authnet executable entrypoint.
 package main
 
 import (
