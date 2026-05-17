@@ -2,15 +2,14 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/lynyx/authnet-cli/internal/cli"
 )
 
 func main() {
-	if err := cli.NewRootCommand(cli.BuildInfo{}).Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	exitCode := cli.Execute(cli.NewRootCommand(cli.BuildInfo{}))
+	if exitCode != 0 {
+		os.Exit(int(exitCode))
 	}
 }

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -13,14 +14,25 @@ func newVersionCommand(build BuildInfo) *cobra.Command {
 		Use:   "version",
 		Short: "Show local version and contract metadata",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, err := fmt.Fprintf(cmd.OutOrStdout(), "authnet %s\nschema version: %s\ncontract status: %s\ncommit: %s\nbuilt: %s\n",
-				build.Version,
-				build.SchemaVersion,
-				build.ContractStatus,
-				build.Commit,
-				build.Date,
-			)
-			return err
+			return renderResult(cmd, commandResult{
+				Data: versionData{
+					Version:        build.Version,
+					SchemaVersion:  build.SchemaVersion,
+					ContractStatus: build.ContractStatus,
+					Commit:         build.Commit,
+					BuiltAt:        build.Date,
+				},
+				Human: func(writer io.Writer) error {
+					_, err := fmt.Fprintf(writer, "authnet %s\nschema version: %s\ncontract status: %s\ncommit: %s\nbuilt: %s\n",
+						build.Version,
+						build.SchemaVersion,
+						build.ContractStatus,
+						build.Commit,
+						build.Date,
+					)
+					return err
+				},
+			})
 		},
 	}
 }
@@ -34,8 +46,22 @@ func newPathsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "config directory: %s\nsensitive-data persistence: none\n", configDir)
-			return err
+			warnings := []warning{{
+				Code:    "no_sensitive_persistence",
+				Message: "v1 does not define CLI-controlled sensitive-data persistence paths.",
+			}}
+			return renderResult(cmd, commandResult{
+				Data: pathsData{
+					ConfigDirectory:             configDir,
+					SensitiveDataPersistence:    "none",
+					HasSensitivePersistencePath: false,
+				},
+				Warnings: warnings,
+				Human: func(writer io.Writer) error {
+					_, err := fmt.Fprintf(writer, "config directory: %s\nsensitive-data persistence: none\n", configDir)
+					return err
+				},
+			})
 		},
 	}
 }
@@ -164,4 +190,18 @@ func authnetConfigDir() (string, error) {
 		return "", fmt.Errorf("resolve user config directory: %w", err)
 	}
 	return filepath.Join(configDir, "authnet-cli"), nil
+}
+
+type versionData struct {
+	Version        string `json:"version"`
+	SchemaVersion  string `json:"schema_version"`
+	ContractStatus string `json:"contract_status"`
+	Commit         string `json:"commit"`
+	BuiltAt        string `json:"built_at"`
+}
+
+type pathsData struct {
+	ConfigDirectory             string `json:"config_directory"`
+	SensitiveDataPersistence    string `json:"sensitive_data_persistence"`
+	HasSensitivePersistencePath bool   `json:"has_sensitive_persistence_path"`
 }
