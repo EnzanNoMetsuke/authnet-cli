@@ -17,6 +17,10 @@ When a human contributor says "this project", treat it as the `authnet-cli` Line
 
 Issues live in Linear; use the repo's Linear workflow rather than GitHub, GitLab, or local markdown. See `docs/agents/issue-tracker.md`.
 
+### Project workflow
+
+Follow the mandatory issue, verification, commit, and tracker-update workflow in `docs/agents/workflow.md`.
+
 ### Upstream MCP access
 
 Use the `mcpproxy` MCP server to discover and call upstream MCP servers. First call `retrieve_tools` for the upstream capability you need, then call the exact returned tool name with `call_tool_read`, `call_tool_write`, or `call_tool_destructive` according to the operation. Include a clear intent reason and data-sensitivity classification.
