@@ -6,9 +6,18 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
+
+const (
+	defaultTransactionListLimit = 25
+	maxTransactionListLimit     = 100
+	defaultTransactionLastRange = "24h"
+)
+
+var nowFunc = time.Now
 
 func newVersionCommand(build BuildInfo) *cobra.Command {
 	return &cobra.Command{
@@ -228,21 +237,38 @@ func newTransactionCommand() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE:  runTransactionGet,
 	})
-	transaction.AddCommand(&cobra.Command{
+	listOptions := &transactionListOptions{
+		Limit: defaultTransactionListLimit,
+	}
+	list := &cobra.Command{
 		Use:   "list",
 		Short: "List settled transaction history",
-		RunE:  notImplemented("transaction list"),
-	})
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runTransactionList(cmd, listOptions)
+		},
+	}
+	list.Flags().StringVar(&listOptions.From, "from", "", "range start as YYYY-MM-DD or RFC3339 timestamp")
+	list.Flags().StringVar(&listOptions.To, "to", "", "range end as YYYY-MM-DD or RFC3339 timestamp")
+	list.Flags().StringVar(&listOptions.Last, "last", defaultTransactionLastRange, "relative range such as 24h, 7d, or 1w")
+	list.Flags().IntVar(&listOptions.Limit, "limit", defaultTransactionListLimit, "maximum transactions to return")
+	transaction.AddCommand(list)
 
 	unsettled := &cobra.Command{
 		Use:   "unsettled",
 		Short: "Inspect unsettled transaction set",
 	}
-	unsettled.AddCommand(&cobra.Command{
+	unsettledOptions := &transactionUnsettledListOptions{
+		Limit: defaultTransactionListLimit,
+	}
+	unsettledList := &cobra.Command{
 		Use:   "list",
 		Short: "List unsettled transactions",
-		RunE:  notImplemented("transaction unsettled list"),
-	})
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runTransactionUnsettledList(cmd, unsettledOptions)
+		},
+	}
+	unsettledList.Flags().IntVar(&unsettledOptions.Limit, "limit", defaultTransactionListLimit, "maximum transactions to return")
+	unsettled.AddCommand(unsettledList)
 	transaction.AddCommand(unsettled)
 
 	return transaction
@@ -327,6 +353,17 @@ type customerProfileGetOptions struct {
 	IncludeShippingAddresses bool
 }
 
+type transactionListOptions struct {
+	From  string
+	To    string
+	Last  string
+	Limit int
+}
+
+type transactionUnsettledListOptions struct {
+	Limit int
+}
+
 type profileListData struct {
 	DefaultProfile string            `json:"default_profile,omitempty"`
 	Profiles       []profileListItem `json:"profiles"`
@@ -377,6 +414,42 @@ type transactionLookupData struct {
 	GatewayDetails            gatewayDetailsSummary  `json:"gateway_details,omitempty"`
 	GatewayMessageCode        string                 `json:"gateway_message_code,omitempty"`
 	Message                   string                 `json:"message,omitempty"`
+}
+
+type transactionListData struct {
+	ProfileName               string                    `json:"profile_name"`
+	EnvironmentClassification string                    `json:"environment_classification"`
+	ProductionMarker          string                    `json:"production_marker,omitempty"`
+	Kind                      string                    `json:"kind"`
+	Query                     transactionListQuery      `json:"query"`
+	Pagination                transactionListPagination `json:"pagination"`
+	BatchCount                int                       `json:"batch_count,omitempty"`
+	Transactions              []transactionListItem     `json:"transactions"`
+	GatewayMessageCode        string                    `json:"gateway_message_code,omitempty"`
+	Message                   string                    `json:"message,omitempty"`
+}
+
+type transactionListQuery struct {
+	From                  string `json:"from,omitempty"`
+	To                    string `json:"to,omitempty"`
+	OperatorLocalTimeZone string `json:"operator_local_time_zone,omitempty"`
+	RelativeRange         string `json:"relative_range,omitempty"`
+}
+
+type transactionListPagination struct {
+	RequestedLimit int  `json:"requested_limit"`
+	ReturnedCount  int  `json:"returned_count"`
+	HasMore        bool `json:"has_more"`
+}
+
+type transactionListItem struct {
+	TransactionID     string         `json:"transaction_id"`
+	TransactionStatus string         `json:"transaction_status,omitempty"`
+	SubmitTimeUTC     string         `json:"submit_time_utc,omitempty"`
+	SubmitTimeLocal   string         `json:"submit_time_local,omitempty"`
+	SettleAmount      string         `json:"settle_amount,omitempty"`
+	Payment           paymentSummary `json:"payment,omitempty"`
+	BatchID           string         `json:"batch_id,omitempty"`
 }
 
 type paymentSummary struct {
@@ -559,6 +632,118 @@ func runTransactionGet(cmd *cobra.Command, args []string) error {
 	})
 }
 
+func runTransactionList(cmd *cobra.Command, listOptions *transactionListOptions) error {
+	limit, err := normalizedTransactionListLimit(listOptions.Limit)
+	if err != nil {
+		return err
+	}
+	resolvedRange, err := resolveTransactionTimeRange(*listOptions, nowFunc())
+	if err != nil {
+		return err
+	}
+
+	options := optionsFromCommand(cmd)
+	profile, err := loadSelectedProfileWithCredentials(options, "transaction list")
+	if err != nil {
+		return err
+	}
+	client, err := newGatewayClient(profile.Entry.Environment)
+	if err != nil {
+		return err
+	}
+	batches, err := client.getSettledBatchList(cmd.Context(), profile.Credentials, resolvedRange.GatewayFrom, resolvedRange.GatewayTo)
+	if err != nil {
+		return err
+	}
+
+	message := firstGatewayMessage(batches.Messages.Message)
+	data := transactionListData{
+		ProfileName:               profile.Entry.Name,
+		EnvironmentClassification: profile.Entry.Environment,
+		ProductionMarker:          productionMarkerForEnvironment(profile.Entry.Environment),
+		Kind:                      "settled",
+		Query:                     resolvedRange.Query,
+		Pagination: transactionListPagination{
+			RequestedLimit: limit,
+		},
+		BatchCount:         len(batches.BatchList),
+		Transactions:       []transactionListItem{},
+		GatewayMessageCode: message.Code,
+		Message:            message.Text,
+	}
+	if !strings.EqualFold(batches.Messages.ResultCode, "Ok") {
+		return renderTransactionListFailure(cmd, "transaction list", batches.Messages.ResultCode, data)
+	}
+
+	for _, batch := range batches.BatchList {
+		if len(data.Transactions) >= limit {
+			break
+		}
+		remaining := limit - len(data.Transactions)
+		response, err := client.getTransactionList(cmd.Context(), profile.Credentials, batch.BatchID.String(), gatewayPaging{
+			Limit:  remaining,
+			Offset: 1,
+		})
+		if err != nil {
+			return err
+		}
+		message = firstGatewayMessage(response.Messages.Message)
+		if !strings.EqualFold(response.Messages.ResultCode, "Ok") {
+			data.GatewayMessageCode = message.Code
+			data.Message = message.Text
+			return renderTransactionListFailure(cmd, "transaction list", response.Messages.ResultCode, data)
+		}
+		data.Transactions = append(data.Transactions, transactionListItems(response.Transactions, batch.BatchID.String())...)
+	}
+	data.Pagination.ReturnedCount = len(data.Transactions)
+	data.Pagination.HasMore = len(data.Transactions) >= limit && len(data.Transactions) < transactionListPossibleCount(batches.BatchList)
+	return renderTransactionListResult(cmd, data)
+}
+
+func runTransactionUnsettledList(cmd *cobra.Command, listOptions *transactionUnsettledListOptions) error {
+	limit, err := normalizedTransactionListLimit(listOptions.Limit)
+	if err != nil {
+		return err
+	}
+
+	options := optionsFromCommand(cmd)
+	profile, err := loadSelectedProfileWithCredentials(options, "transaction unsettled list")
+	if err != nil {
+		return err
+	}
+	client, err := newGatewayClient(profile.Entry.Environment)
+	if err != nil {
+		return err
+	}
+	response, err := client.getUnsettledTransactionList(cmd.Context(), profile.Credentials, gatewayPaging{
+		Limit:  limit,
+		Offset: 1,
+	})
+	if err != nil {
+		return err
+	}
+
+	message := firstGatewayMessage(response.Messages.Message)
+	data := transactionListData{
+		ProfileName:               profile.Entry.Name,
+		EnvironmentClassification: profile.Entry.Environment,
+		ProductionMarker:          productionMarkerForEnvironment(profile.Entry.Environment),
+		Kind:                      "unsettled",
+		Pagination: transactionListPagination{
+			RequestedLimit: limit,
+			ReturnedCount:  len(response.Transactions),
+			HasMore:        len(response.Transactions) >= limit,
+		},
+		Transactions:       transactionListItems(response.Transactions, ""),
+		GatewayMessageCode: message.Code,
+		Message:            message.Text,
+	}
+	if !strings.EqualFold(response.Messages.ResultCode, "Ok") {
+		return renderTransactionListFailure(cmd, "transaction unsettled list", response.Messages.ResultCode, data)
+	}
+	return renderTransactionListResult(cmd, data)
+}
+
 func runCustomerProfileGet(cmd *cobra.Command, args []string, getOptions *customerProfileGetOptions) error {
 	customerProfileID := strings.TrimSpace(args[0])
 	if customerProfileID == "" {
@@ -698,6 +883,67 @@ func renderCustomerProfileListFailure(cmd *cobra.Command, resultCode string, dat
 	return renderedError{exitCode: exitCode, message: data.Message}
 }
 
+func renderTransactionListResult(cmd *cobra.Command, data transactionListData) error {
+	data = sanitizeForOutput(data).(transactionListData)
+	return renderResult(cmd, commandResult{
+		Data: data,
+		Human: func(writer io.Writer) error {
+			if _, writeErr := fmt.Fprintf(writer, "%s transactions: %d\nenvironment: %s%s\n",
+				data.Kind,
+				data.Pagination.ReturnedCount,
+				data.EnvironmentClassification,
+				productionMarkerSuffix(data.ProductionMarker),
+			); writeErr != nil {
+				return writeErr
+			}
+			if data.Query.From != "" || data.Query.To != "" {
+				if _, writeErr := fmt.Fprintf(writer, "range: %s to %s\n", data.Query.From, data.Query.To); writeErr != nil {
+					return writeErr
+				}
+			}
+			for _, item := range data.Transactions {
+				if _, writeErr := fmt.Fprintf(writer, "%s\t%s\t%s\t%s %s\n",
+					item.TransactionID,
+					item.TransactionStatus,
+					item.SettleAmount,
+					item.Payment.AccountType,
+					item.Payment.AccountNumber,
+				); writeErr != nil {
+					return writeErr
+				}
+			}
+			return nil
+		},
+	})
+}
+
+func renderTransactionListFailure(cmd *cobra.Command, operation string, resultCode string, data transactionListData) error {
+	if data.Message == "" {
+		data.Message = operation + " failed"
+	}
+	data = sanitizeForOutput(data).(transactionListData)
+	errorCode, exitCode := gatewayFailureMapping(data.GatewayMessageCode, data.Message, "transaction_not_found")
+	renderErr := renderResult(cmd, commandResult{
+		Data: data,
+		Errors: []structuredError{{
+			Code:    errorCode,
+			Message: data.Message,
+		}},
+		Human: func(writer io.Writer) error {
+			_, writeErr := fmt.Fprintf(writer, "%s: failed\nresult: %s\nmessage: %s\n",
+				operation,
+				resultCode,
+				data.Message,
+			)
+			return writeErr
+		},
+	})
+	if renderErr != nil {
+		return renderErr
+	}
+	return renderedError{exitCode: exitCode, message: data.Message}
+}
+
 func renderCustomerProfileFailure(cmd *cobra.Command, operation string, resultCode string, customerProfileID string, gatewayMessageCode string, message string) error {
 	if message == "" {
 		message = operation + " failed"
@@ -796,6 +1042,30 @@ func (data transactionLookupData) withTransaction(transaction gatewayTransaction
 	return data
 }
 
+func transactionListItems(transactions []gatewayTransaction, batchID string) []transactionListItem {
+	items := make([]transactionListItem, 0, len(transactions))
+	for _, transaction := range transactions {
+		items = append(items, transactionListItem{
+			TransactionID:     transaction.TransactionID.String(),
+			TransactionStatus: transaction.TransactionStatus.String(),
+			SubmitTimeUTC:     transaction.SubmitTimeUTC.String(),
+			SubmitTimeLocal:   transaction.SubmitTimeLocal.String(),
+			SettleAmount:      transaction.SettleAmount.String(),
+			Payment: paymentSummary{
+				AccountType:   firstNonEmpty(transaction.AccountType.String(), transaction.Payment.CreditCard.CardType.String()),
+				AccountNumber: firstNonEmpty(transaction.AccountNumber.String(), transaction.Payment.CreditCard.CardNumber.String()),
+				CardType:      transaction.Payment.CreditCard.CardType.String(),
+			},
+			BatchID: firstNonEmpty(batchID, transaction.Batch.BatchID.String()),
+		})
+	}
+	return items
+}
+
+func transactionListPossibleCount(batches []gatewayBatch) int {
+	return len(batches) * maxTransactionListLimit
+}
+
 func (data customerProfileLookupData) withCustomerProfile(profile gatewayCustomerProfile, options *customerProfileGetOptions) customerProfileLookupData {
 	data.CustomerProfileID = firstNonEmpty(profile.CustomerProfileID.String(), data.CustomerProfileID)
 	data.MerchantCustomerID = profile.MerchantCustomerID.String()
@@ -850,6 +1120,127 @@ func productionMarkerSuffix(marker string) string {
 		return ""
 	}
 	return " " + marker
+}
+
+func normalizedTransactionListLimit(limit int) (int, error) {
+	if limit < 1 {
+		return 0, newUsageError("--limit must be at least 1")
+	}
+	if limit > maxTransactionListLimit {
+		return 0, newUsageError("--limit must be at most %d", maxTransactionListLimit)
+	}
+	return limit, nil
+}
+
+type resolvedTransactionTimeRange struct {
+	GatewayFrom string
+	GatewayTo   string
+	Query       transactionListQuery
+}
+
+func resolveTransactionTimeRange(options transactionListOptions, now time.Time) (resolvedTransactionTimeRange, error) {
+	if strings.TrimSpace(options.Last) != "" && (strings.TrimSpace(options.From) != "" || strings.TrimSpace(options.To) != "") {
+		return resolvedTransactionTimeRange{}, newUsageError("--last cannot be combined with --from or --to")
+	}
+	location := now.Location()
+	to := now
+	var from time.Time
+	relative := strings.TrimSpace(options.Last)
+	if relative != "" {
+		duration, err := parseRelativeDuration(relative)
+		if err != nil {
+			return resolvedTransactionTimeRange{}, err
+		}
+		from = to.Add(-duration)
+	} else {
+		var err error
+		from, err = parseOperatorTime(options.From, location, false)
+		if err != nil {
+			return resolvedTransactionTimeRange{}, err
+		}
+		to, err = parseOperatorTime(options.To, location, true)
+		if err != nil {
+			return resolvedTransactionTimeRange{}, err
+		}
+	}
+	if from.IsZero() {
+		return resolvedTransactionTimeRange{}, newUsageError("transaction list requires --last or both --from and --to")
+	}
+	if !from.Before(to) {
+		return resolvedTransactionTimeRange{}, newUsageError("transaction list requires --from to be before --to")
+	}
+	return resolvedTransactionTimeRange{
+		GatewayFrom: from.Format(time.RFC3339),
+		GatewayTo:   to.Format(time.RFC3339),
+		Query: transactionListQuery{
+			From:                  from.Format(time.RFC3339),
+			To:                    to.Format(time.RFC3339),
+			OperatorLocalTimeZone: location.String(),
+			RelativeRange:         relative,
+		},
+	}, nil
+}
+
+func parseOperatorTime(value string, location *time.Location, endOfDay bool) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, newUsageError("transaction list requires --last or both --from and --to")
+	}
+	if parsed, err := time.ParseInLocation("2006-01-02", value, location); err == nil {
+		if endOfDay {
+			return parsed.AddDate(0, 0, 1).Add(-time.Nanosecond), nil
+		}
+		return parsed, nil
+	}
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed, nil
+	}
+	if parsed, err := time.ParseInLocation("2006-01-02T15:04:05", value, location); err == nil {
+		return parsed, nil
+	}
+	return time.Time{}, newUsageError("invalid time %q: expected YYYY-MM-DD, RFC3339, or local YYYY-MM-DDTHH:MM:SS", value)
+}
+
+func parseRelativeDuration(value string) (time.Duration, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, newUsageError("--last requires a duration")
+	}
+	multiplier := time.Hour
+	number := strings.TrimSuffix(value, "h")
+	switch {
+	case strings.HasSuffix(value, "d"):
+		multiplier = 24 * time.Hour
+		number = strings.TrimSuffix(value, "d")
+	case strings.HasSuffix(value, "w"):
+		multiplier = 7 * 24 * time.Hour
+		number = strings.TrimSuffix(value, "w")
+	case strings.HasSuffix(value, "h"):
+	default:
+		return 0, newUsageError("invalid --last value %q: expected duration ending in h, d, or w", value)
+	}
+	count, err := parsePositiveInteger(number)
+	if err != nil {
+		return 0, newUsageError("invalid --last value %q: expected positive duration", value)
+	}
+	return time.Duration(count) * multiplier, nil
+}
+
+func parsePositiveInteger(value string) (int, error) {
+	if value == "" {
+		return 0, fmt.Errorf("missing integer")
+	}
+	result := 0
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return 0, fmt.Errorf("invalid integer")
+		}
+		result = result*10 + int(char-'0')
+	}
+	if result < 1 {
+		return 0, fmt.Errorf("invalid integer")
+	}
+	return result, nil
 }
 
 func firstNonEmpty(values ...string) string {

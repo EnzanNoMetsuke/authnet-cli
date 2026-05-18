@@ -67,6 +67,41 @@ type getCustomerProfileIDsRequest struct {
 	MerchantAuthentication merchantAuthentication `json:"merchantAuthentication"`
 }
 
+type getSettledBatchListRequestEnvelope struct {
+	Request getSettledBatchListRequest `json:"getSettledBatchListRequest"`
+}
+
+type getSettledBatchListRequest struct {
+	MerchantAuthentication merchantAuthentication `json:"merchantAuthentication"`
+	IncludeStatistics      bool                   `json:"includeStatistics"`
+	FirstSettlementDate    string                 `json:"firstSettlementDate"`
+	LastSettlementDate     string                 `json:"lastSettlementDate"`
+}
+
+type getTransactionListRequestEnvelope struct {
+	Request getTransactionListRequest `json:"getTransactionListRequest"`
+}
+
+type getTransactionListRequest struct {
+	MerchantAuthentication merchantAuthentication `json:"merchantAuthentication"`
+	BatchID                string                 `json:"batchId"`
+	Paging                 gatewayPaging          `json:"paging"`
+}
+
+type getUnsettledTransactionListRequestEnvelope struct {
+	Request getUnsettledTransactionListRequest `json:"getUnsettledTransactionListRequest"`
+}
+
+type getUnsettledTransactionListRequest struct {
+	MerchantAuthentication merchantAuthentication `json:"merchantAuthentication"`
+	Paging                 gatewayPaging          `json:"paging"`
+}
+
+type gatewayPaging struct {
+	Limit  int `json:"limit"`
+	Offset int `json:"offset"`
+}
+
 type authenticateTestResponseEnvelope struct {
 	Messages gatewayMessages `json:"messages"`
 }
@@ -84,6 +119,21 @@ type getCustomerProfileResponseEnvelope struct {
 type getCustomerProfileIDsResponseEnvelope struct {
 	Messages gatewayMessages `json:"messages"`
 	IDs      []gatewayString `json:"ids"`
+}
+
+type getSettledBatchListResponseEnvelope struct {
+	Messages  gatewayMessages `json:"messages"`
+	BatchList []gatewayBatch  `json:"batchList"`
+}
+
+type getTransactionListResponseEnvelope struct {
+	Messages     gatewayMessages      `json:"messages"`
+	Transactions []gatewayTransaction `json:"transactions"`
+}
+
+type getUnsettledTransactionListResponseEnvelope struct {
+	Messages     gatewayMessages      `json:"messages"`
+	Transactions []gatewayTransaction `json:"transactions"`
 }
 
 type gatewayMessages struct {
@@ -303,6 +353,87 @@ func (client gatewayClient) getCustomerProfileIDs(ctx context.Context, credentia
 			exitCode: exitGatewayFailure,
 			code:     "gateway_response_invalid",
 			message:  "Authorize.Net returned an invalid customer profile list response",
+		}
+	}
+	return parsed, nil
+}
+
+func (client gatewayClient) getSettledBatchList(ctx context.Context, credentials authCredentials, from string, to string) (getSettledBatchListResponseEnvelope, error) {
+	requestBody := getSettledBatchListRequestEnvelope{
+		Request: getSettledBatchListRequest{
+			MerchantAuthentication: merchantAuthentication{
+				Name:           credentials.APILoginID,
+				TransactionKey: credentials.TransactionKey,
+			},
+			IncludeStatistics:   false,
+			FirstSettlementDate: from,
+			LastSettlementDate:  to,
+		},
+	}
+	responseBody, err := client.post(ctx, requestBody, "settled batch list")
+	if err != nil {
+		return getSettledBatchListResponseEnvelope{}, err
+	}
+
+	var parsed getSettledBatchListResponseEnvelope
+	if err := decodeGatewayJSON(responseBody, &parsed); err != nil {
+		return getSettledBatchListResponseEnvelope{}, cliError{
+			exitCode: exitGatewayFailure,
+			code:     "gateway_response_invalid",
+			message:  "Authorize.Net returned an invalid settled batch list response",
+		}
+	}
+	return parsed, nil
+}
+
+func (client gatewayClient) getTransactionList(ctx context.Context, credentials authCredentials, batchID string, paging gatewayPaging) (getTransactionListResponseEnvelope, error) {
+	requestBody := getTransactionListRequestEnvelope{
+		Request: getTransactionListRequest{
+			MerchantAuthentication: merchantAuthentication{
+				Name:           credentials.APILoginID,
+				TransactionKey: credentials.TransactionKey,
+			},
+			BatchID: batchID,
+			Paging:  paging,
+		},
+	}
+	responseBody, err := client.post(ctx, requestBody, "settled transaction list")
+	if err != nil {
+		return getTransactionListResponseEnvelope{}, err
+	}
+
+	var parsed getTransactionListResponseEnvelope
+	if err := decodeGatewayJSON(responseBody, &parsed); err != nil {
+		return getTransactionListResponseEnvelope{}, cliError{
+			exitCode: exitGatewayFailure,
+			code:     "gateway_response_invalid",
+			message:  "Authorize.Net returned an invalid settled transaction list response",
+		}
+	}
+	return parsed, nil
+}
+
+func (client gatewayClient) getUnsettledTransactionList(ctx context.Context, credentials authCredentials, paging gatewayPaging) (getUnsettledTransactionListResponseEnvelope, error) {
+	requestBody := getUnsettledTransactionListRequestEnvelope{
+		Request: getUnsettledTransactionListRequest{
+			MerchantAuthentication: merchantAuthentication{
+				Name:           credentials.APILoginID,
+				TransactionKey: credentials.TransactionKey,
+			},
+			Paging: paging,
+		},
+	}
+	responseBody, err := client.post(ctx, requestBody, "unsettled transaction list")
+	if err != nil {
+		return getUnsettledTransactionListResponseEnvelope{}, err
+	}
+
+	var parsed getUnsettledTransactionListResponseEnvelope
+	if err := decodeGatewayJSON(responseBody, &parsed); err != nil {
+		return getUnsettledTransactionListResponseEnvelope{}, cliError{
+			exitCode: exitGatewayFailure,
+			code:     "gateway_response_invalid",
+			message:  "Authorize.Net returned an invalid unsettled transaction list response",
 		}
 	}
 	return parsed, nil

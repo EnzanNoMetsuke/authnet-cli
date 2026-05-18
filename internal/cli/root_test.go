@@ -187,7 +187,7 @@ func TestJSONFailuresAreStructuredOnStdout(t *testing.T) {
 }
 
 func TestNotImplementedUsesExitTaxonomy(t *testing.T) {
-	stdout, stderr, code, err := executeCommandWithExit("transaction", "list")
+	stdout, stderr, code, err := executeCommandWithExit("response-code", "explain")
 	if err == nil {
 		t.Fatal("expected scaffold command to fail")
 	}
@@ -197,7 +197,7 @@ func TestNotImplementedUsesExitTaxonomy(t *testing.T) {
 	if stdout != "" {
 		t.Fatalf("expected non-JSON failure stdout to stay empty, got %q", stdout)
 	}
-	assertContains(t, stderr, "transaction list is not implemented in this scaffold")
+	assertContains(t, stderr, "response-code explain is not implemented in this scaffold")
 }
 
 func TestAuthTestSucceedsWithMockGateway(t *testing.T) {
@@ -532,6 +532,202 @@ func TestTransactionGetHumanOutput(t *testing.T) {
 	assertContains(t, stdout, "settle amount: 12.34")
 	assertContains(t, stdout, "payment: Visa XXXX1111")
 	assertContains(t, stdout, "settlement: settledSuccessfully")
+}
+
+func TestTransactionListResolvesRelativeRangeAndUsesBoundedPagination(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	withFixedNow(t, time.Date(2026, 5, 18, 12, 0, 0, 0, time.FixedZone("operator-local", -4*60*60)))
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getSettledBatchListRequest"`,
+			AlsoWant: []string{
+				`"firstSettlementDate":"2026-05-11T12:00:00-04:00"`,
+				`"lastSettlementDate":"2026-05-18T12:00:00-04:00"`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"batchList": [{"batchId": 3003, "settlementState": "settledSuccessfully", "settlementTimeUTC": "2026-05-18T03:00:00Z"}]
+			}`,
+		},
+		{
+			Want: `"getTransactionListRequest"`,
+			AlsoWant: []string{
+				`"batchId":"3003"`,
+				`"limit":2`,
+				`"offset":1`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [{
+					"transId": "1234567890",
+					"transactionStatus": "settledSuccessfully",
+					"submitTimeUTC": "2026-05-18T01:02:03Z",
+					"settleAmount": 12.34,
+					"accountType": "Visa",
+					"accountNumber": "XXXX1111",
+					"billTo": {"email": "customer@example.test"}
+				}]
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "transaction", "list", "--last", "7d", "--limit", "2")
+	if err != nil {
+		t.Fatalf("expected transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"command": "authnet transaction list"`)
+	assertContains(t, stdout, `"kind": "settled"`)
+	assertContains(t, stdout, `"from": "2026-05-11T12:00:00-04:00"`)
+	assertContains(t, stdout, `"to": "2026-05-18T12:00:00-04:00"`)
+	assertContains(t, stdout, `"relative_range": "7d"`)
+	assertContains(t, stdout, `"requested_limit": 2`)
+	assertContains(t, stdout, `"returned_count": 1`)
+	assertContains(t, stdout, `"transaction_id": "1234567890"`)
+	assertContains(t, stdout, `"account_number": "XXXX1111"`)
+	assertNotContains(t, stdout, "customer@example.test")
+	assertNotContains(t, stdout, "secret-login")
+	assertNotContains(t, stdout, "secret-key")
+}
+
+func TestTransactionListUsesOperatorLocalDateRange(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	withFixedNow(t, time.Date(2026, 5, 18, 12, 0, 0, 0, time.FixedZone("operator-local", -4*60*60)))
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getSettledBatchListRequest"`,
+			AlsoWant: []string{
+				`"firstSettlementDate":"2026-05-01T00:00:00-04:00"`,
+				`"lastSettlementDate":"2026-05-02T23:59:59-04:00"`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "No records found."}]},
+				"batchList": []
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "transaction", "list", "--last", "", "--from", "2026-05-01", "--to", "2026-05-02")
+	if err != nil {
+		t.Fatalf("expected transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"from": "2026-05-01T00:00:00-04:00"`)
+	assertContains(t, stdout, `"to": "2026-05-02T23:59:59-04:00"`)
+	assertContains(t, stdout, `"operator_local_time_zone": "operator-local"`)
+	assertContains(t, stdout, `"returned_count": 0`)
+}
+
+func TestTransactionUnsettledListUsesDistinctGatewayRequest(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getUnsettledTransactionListRequest"`,
+			AlsoWant: []string{
+				`"limit":1`,
+				`"offset":1`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [{
+					"transId": "9001",
+					"transactionStatus": "capturedPendingSettlement",
+					"submitTimeUTC": "2026-05-18T01:02:03Z",
+					"accountType": "MasterCard",
+					"accountNumber": "XXXX2222"
+				}]
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("transaction", "unsettled", "list", "--limit", "1")
+	if err != nil {
+		t.Fatalf("expected unsettled transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, "unsettled transactions: 1")
+	assertContains(t, stdout, "9001")
+	assertContains(t, stdout, "capturedPendingSettlement")
+	assertContains(t, stdout, "MasterCard XXXX2222")
+}
+
+func TestTransactionListUsesProductionEndpointForExplicitProductionProfile(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	withFixedNow(t, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	sandboxServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		t.Errorf("production transaction list unexpectedly used sandbox endpoint")
+		writer.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(sandboxServer.Close)
+	productionServer := newReportingTestServer(t, []reportingResponse{{
+		Want: `"getSettledBatchListRequest"`,
+		Body: `{"messages":{"resultCode":"Ok","message":[{"code":"I00001","text":"No records found."}]},"batchList":[]}`,
+	}})
+	withGatewayTestEndpoint(t, environmentSandbox, sandboxServer.URL)
+	withGatewayTestEndpoint(t, environmentProduction, productionServer.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "prod-main", "--environment", "production")
+	if err != nil {
+		t.Fatalf("expected production profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "--profile", "prod-main", "transaction", "list", "--last", "1d")
+	if err != nil {
+		t.Fatalf("expected transaction list to use production endpoint: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"environment_classification": "production"`)
+	assertContains(t, stdout, `"production_marker": "PRODUCTION"`)
+}
+
+func TestTransactionListRejectsInvalidRangeAndLimit(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("--json", "transaction", "list", "--limit", "101")
+	if err == nil {
+		t.Fatal("expected invalid limit to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "usage_or_config_error"`)
+	assertContains(t, stdout, "--limit must be at most 100")
+
+	stdout, stderr, code, err = executeCommandWithExit("--json", "transaction", "list", "--last", "7d", "--from", "2026-05-01")
+	if err == nil {
+		t.Fatal("expected conflicting time range to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, "--last cannot be combined with --from or --to")
 }
 
 func TestCustomerProfileGetDefaultsToMetadataOnly(t *testing.T) {
@@ -1080,6 +1276,66 @@ func newCustomerProfileListTestServer(t *testing.T, status int, responseBody str
 	}))
 	t.Cleanup(server.Close)
 	return server
+}
+
+type reportingResponse struct {
+	Want     string
+	AlsoWant []string
+	Body     string
+}
+
+func newReportingTestServer(t *testing.T, responses []reportingResponse) *httptest.Server {
+	t.Helper()
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			t.Errorf("expected POST request, got %s", request.Method)
+		}
+		if got := request.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("expected JSON content type, got %q", got)
+		}
+		if requests >= len(responses) {
+			t.Errorf("unexpected extra reporting request")
+			writer.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		response := responses[requests]
+		requests++
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		text := string(body)
+		if !strings.Contains(text, response.Want) {
+			t.Errorf("expected request body to contain %s, got %s", response.Want, text)
+		}
+		for _, want := range response.AlsoWant {
+			if !strings.Contains(text, want) {
+				t.Errorf("expected request body to contain %s, got %s", want, text)
+			}
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte(response.Body))
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		if requests != len(responses) {
+			t.Errorf("expected %d reporting requests, got %d", len(responses), requests)
+		}
+	})
+	return server
+}
+
+func withFixedNow(t *testing.T, now time.Time) {
+	t.Helper()
+	original := nowFunc
+	nowFunc = func() time.Time {
+		return now
+	}
+	t.Cleanup(func() {
+		nowFunc = original
+	})
 }
 
 func withGatewayTestEndpoint(t *testing.T, environment string, endpoint string) {
