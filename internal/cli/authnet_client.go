@@ -210,6 +210,8 @@ type gatewayTransactionResponse struct {
 type gatewayTransactionMessage struct {
 	Code        string `json:"code"`
 	Description string `json:"description"`
+	ErrorCode   string `json:"errorCode"`
+	ErrorText   string `json:"errorText"`
 	Text        string `json:"text"`
 }
 

@@ -384,11 +384,11 @@ func (plan sandboxChargePlan) gatewayRequest() gatewayTransactionRequest {
 func sandboxAttemptFromResponse(attempt int, response createTransactionResponseEnvelope) sandboxChargeAttempt {
 	message := firstGatewayMessage(response.Messages.Message)
 	transactionMessage := firstTransactionMessage(response.TransactionResponse.Messages)
-	if transactionMessage.Code == "" && transactionMessage.Description == "" {
+	if transactionMessage.isEmpty() {
 		transactionMessage = firstTransactionMessage(response.TransactionResponse.Errors)
 	}
-	code := firstNonEmpty(transactionMessage.Code, message.Code)
-	text := firstNonEmpty(transactionMessage.Description, transactionMessage.Text, message.Text)
+	code := firstNonEmpty(transactionMessage.Code, transactionMessage.ErrorCode, message.Code)
+	text := firstNonEmpty(transactionMessage.Description, transactionMessage.ErrorText, transactionMessage.Text, message.Text)
 	return sandboxChargeAttempt{
 		Attempt:            attempt,
 		TransactionID:      response.TransactionResponse.TransactionID,
@@ -400,6 +400,14 @@ func sandboxAttemptFromResponse(attempt int, response createTransactionResponseE
 		GatewayMessageCode: code,
 		Message:            text,
 	}
+}
+
+func (message gatewayTransactionMessage) isEmpty() bool {
+	return message.Code == "" &&
+		message.Description == "" &&
+		message.ErrorCode == "" &&
+		message.ErrorText == "" &&
+		message.Text == ""
 }
 
 func firstTransactionMessage(messages []gatewayTransactionMessage) gatewayTransactionMessage {

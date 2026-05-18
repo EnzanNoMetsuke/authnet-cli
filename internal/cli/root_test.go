@@ -442,7 +442,7 @@ func TestSandboxChargeDuplicateReportsSecondAttempt(t *testing.T) {
 				`"settingName":"duplicateWindow","settingValue":"120"`,
 				`"invoiceNumber":"an-dup-`,
 			},
-			Body: `{"messages":{"resultCode":"Error","message":[{"code":"E00027","text":"The transaction was unsuccessful."}]},"transactionResponse":{"responseCode":"3","errors":[{"code":"11","description":"A duplicate transaction has been submitted."}]}}`,
+			Body: `{"messages":{"resultCode":"Error","message":[{"code":"E00027","text":"The transaction was unsuccessful."}]},"transactionResponse":{"responseCode":"3","transId":"1000003","authCode":"ABC123","avsResultCode":"Y","cvvResultCode":"M","errors":[{"errorCode":"11","errorText":"A duplicate transaction has been submitted."}]}}`,
 		},
 	})
 	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
@@ -460,6 +460,10 @@ func TestSandboxChargeDuplicateReportsSecondAttempt(t *testing.T) {
 	assertContains(t, stdout, `"duplicate_window_seconds": 120`)
 	assertContains(t, stdout, `"attempt": 1`)
 	assertContains(t, stdout, `"attempt": 2`)
+	assertContains(t, stdout, `"transaction_id": "1000003"`)
+	assertContains(t, stdout, `"response_code": "3"`)
+	assertContains(t, stdout, `"gateway_message_code": "11"`)
+	assertContains(t, stdout, `"message": "A duplicate transaction has been submitted."`)
 	assertContains(t, stdout, `"duplicate_detected": true`)
 	assertNotContains(t, stdout, "4111111111111111")
 	assertNotContains(t, stdout, "900")
