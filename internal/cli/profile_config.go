@@ -258,6 +258,44 @@ func validateCredentialAvailability(result validationResult, profile profileEntr
 	return result
 }
 
+func resolveProfileEnvironment(options *globalOptions) error {
+	if options.Environment != "" {
+		return nil
+	}
+	if options.Profile == "" && !options.RawResponse {
+		return nil
+	}
+	store, err := newProfileStore()
+	if err != nil {
+		return err
+	}
+	file, err := store.load()
+	if err != nil {
+		return err
+	}
+	selected := options.Profile
+	if selected == "" {
+		selected = file.DefaultProfile
+	}
+	if selected == "" {
+		return nil
+	}
+	for _, profile := range file.Profiles {
+		if profile.Name == selected {
+			options.Profile = profile.Name
+			options.Environment = profile.Environment
+			if profile.Environment == environmentProduction && options.RawResponse {
+				return newSafetyDeniedError("raw response mode is unavailable for production-classified profiles")
+			}
+			return nil
+		}
+	}
+	if options.Profile != "" {
+		return newUsageError("profile %q does not exist", options.Profile)
+	}
+	return nil
+}
+
 func promptForMissing(scanner *bufio.Scanner, writer io.Writer, label string, value *string) error {
 	if strings.TrimSpace(*value) != "" {
 		return nil

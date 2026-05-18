@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,6 +58,7 @@ func TestRootStartsAndShowsHelp(t *testing.T) {
 	assertContains(t, stdout, "response-code")
 	assertContains(t, stdout, "--automation")
 	assertContains(t, stdout, "--color")
+	assertContains(t, stdout, "--raw-response")
 }
 
 func TestVersionFlagPrintsConciseLocalVersion(t *testing.T) {
@@ -343,6 +346,90 @@ func TestEnvironmentOverridesAppearInJSONEnvelope(t *testing.T) {
 	}
 	assertContains(t, stdout, `"profile_name": "env-profile"`)
 	assertContains(t, stdout, `"environment_classification": "sandbox"`)
+}
+
+func TestRawResponseModeRequiresSandboxClassification(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "dummy-login")
+	t.Setenv(transactionKeyEnvName, "dummy-key")
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected sandbox profile setup to succeed: %v", err)
+	}
+	_, _, err = executeCommand("--automation", "profile", "setup", "--name", "prod-main", "--environment", "production")
+	if err != nil {
+		t.Fatalf("expected production profile setup to succeed: %v", err)
+	}
+
+	stdout, _, err := executeCommand("--json", "--raw-response", "--profile", "sandbox-main", "version")
+	if err != nil {
+		t.Fatalf("expected sandbox raw-response request to pass safety gate: %v", err)
+	}
+	assertContains(t, stdout, `"profile_name": "sandbox-main"`)
+	assertContains(t, stdout, `"environment_classification": "sandbox"`)
+
+	stdout, stderr, code, err := executeCommandWithExit("--json", "--raw-response", "--profile", "prod-main", "version")
+	if err == nil {
+		t.Fatal("expected production raw-response request to fail")
+	}
+	if code != exitSafetyDenied {
+		t.Fatalf("expected safety denied exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "safety_policy_denied"`)
+	assertContains(t, stdout, "raw response mode is unavailable for production-classified profiles")
+}
+
+func TestRedactionRemovesSyntheticSentinelsFromOutputs(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "SENTINEL_LOGIN_VALUE")
+	t.Setenv(transactionKeyEnvName, "SENTINEL_TRANSACTION_KEY")
+
+	stdout, stderr, err := executeCommand("--automation", "profile", "setup", "--name", "safe", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected setup to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertNotContains(t, stdout, "SENTINEL_LOGIN_VALUE")
+	assertNotContains(t, stdout, "SENTINEL_TRANSACTION_KEY")
+
+	stdout, stderr, err = executeCommand("--json", "config", "validate")
+	if err != nil {
+		t.Fatalf("expected validate to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertNotContains(t, stdout, "SENTINEL_LOGIN_VALUE")
+	assertNotContains(t, stdout, "SENTINEL_TRANSACTION_KEY")
+
+	stdout, _, _, err = executeCommandWithExit("--json", "--color=SENTINEL_BAD_COLOR", "version")
+	if err == nil {
+		t.Fatal("expected invalid color to fail")
+	}
+	assertContains(t, stdout, redactedValue)
+	assertNotContains(t, stdout, "SENTINEL_BAD_COLOR")
+}
+
+func TestRedactionRemovesSyntheticSentinelsFromWarnings(t *testing.T) {
+	command := NewRootCommand(BuildInfo{SchemaVersion: "0.1.0"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	command.SetOut(&stdout)
+	command.SetErr(&stderr)
+
+	err := renderResult(command, commandResult{
+		Warnings: []warning{{
+			Code:    "synthetic",
+			Message: "warning contains SENTINEL_CUSTOMER_PII",
+		}},
+		Human: func(writer io.Writer) error {
+			_, writeErr := fmt.Fprintln(writer, "safe human output")
+			return writeErr
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected render to succeed: %v", err)
+	}
+	assertContains(t, stderr.String(), redactedValue)
+	assertNotContains(t, stderr.String(), "SENTINEL_CUSTOMER_PII")
 }
 
 func assertContains(t *testing.T, text string, want string) {

@@ -73,6 +73,7 @@ type commandResult struct {
 }
 
 func renderResult(cmd *cobra.Command, result commandResult) error {
+	result = sanitizeCommandResult(result)
 	options := optionsFromCommand(cmd)
 	if options.JSON {
 		return writeOutputJSON(cmd.OutOrStdout(), newEnvelope(cmd, result.Data, result.Warnings, result.Errors), colorEnabled(options))
@@ -145,12 +146,12 @@ func structuredFailure(cmd *cobra.Command, err error) (envelope, ExitCode) {
 	if errors.As(err, &appErr) {
 		return newEnvelope(cmd, nil, nil, []structuredError{{
 			Code:    appErr.code,
-			Message: appErr.message,
+			Message: sanitizeString(appErr.message),
 		}}), appErr.exitCode
 	}
 	return newEnvelope(cmd, nil, nil, []structuredError{{
 		Code:    "general_failure",
-		Message: err.Error(),
+		Message: sanitizeString(err.Error()),
 	}}), exitGeneralFailure
 }
 
@@ -185,4 +186,15 @@ func newNotImplementedError(name string) error {
 
 func colorEnabled(options *globalOptions) bool {
 	return options.Color == "always" && !options.NoColor && !options.Automation
+}
+
+func sanitizeCommandResult(result commandResult) commandResult {
+	result.Data = sanitizeForOutput(result.Data)
+	if result.Warnings != nil {
+		result.Warnings = sanitizeForOutput(result.Warnings).([]warning)
+	}
+	if result.Errors != nil {
+		result.Errors = sanitizeForOutput(result.Errors).([]structuredError)
+	}
+	return result
 }

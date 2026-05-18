@@ -21,6 +21,7 @@ type globalOptions struct {
 	Automation  bool
 	Profile     string
 	Environment string
+	RawResponse bool
 	Color       string
 	NoColor     bool
 }
@@ -46,6 +47,7 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 	root.PersistentFlags().BoolVar(&options.JSON, "json", false, "emit the stable JSON contract")
 	root.PersistentFlags().BoolVar(&options.Automation, "automation", false, "enable deterministic non-interactive automation mode")
 	root.PersistentFlags().StringVar(&options.Profile, "profile", "", "profile name to use for this command")
+	root.PersistentFlags().BoolVar(&options.RawResponse, "raw-response", false, "allow sandbox-only raw gateway response output")
 	root.PersistentFlags().StringVar(&options.Color, "color", "auto", "control color output: auto, always, never")
 	root.PersistentFlags().BoolVar(&options.NoColor, "no-color", false, "disable color output")
 
@@ -118,6 +120,12 @@ func validateGlobalOptions(options *globalOptions) error {
 	}
 	if options.NoColor {
 		options.Color = "never"
+	}
+	if err := resolveProfileEnvironment(options); err != nil {
+		return err
+	}
+	if options.RawResponse && options.Environment != environmentSandbox {
+		return newSafetyDeniedError("raw response mode requires a sandbox-classified profile or AUTHNET_ENVIRONMENT=sandbox")
 	}
 	return nil
 }
