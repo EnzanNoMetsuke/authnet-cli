@@ -69,15 +69,17 @@ Do not push tags from an agent workflow unless explicitly instructed.
 The initial convenience install channel is a separate Homebrew tap repository:
 
 ```text
-EnzanNoMetsuke/homebrew-tap
+Exigentix/homebrew-tap
 ```
 
-Before the first published release, create that repository and add a `HOMEBREW_TAP_GITHUB_TOKEN` Actions secret with permission to write to it. GoReleaser will then publish `Formula/authnet.rb` during tagged releases.
+The source repository can remain under `EnzanNoMetsuke/authnet-cli`; only the tap repository needs to live under the Exigentix organization.
+
+Before the first published release, create `Exigentix/homebrew-tap` and add a `HOMEBREW_TAP_GITHUB_TOKEN` Actions secret to this repository with permission to write to the tap. GoReleaser will then publish `Formula/authnet.rb` during tagged releases.
 
 After the first release, install with:
 
 ```sh
-brew tap EnzanNoMetsuke/tap
+brew tap Exigentix/tap
 brew install authnet
 authnet --version
 ```

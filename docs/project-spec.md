@@ -327,7 +327,7 @@ V1 canonical release artifacts:
 
 V1 initial convenience install channel:
 
-- Separate Homebrew tap repository
+- Separate Homebrew tap repository: `Exigentix/homebrew-tap`
 
 Post-v1 release attestations:
 
@@ -459,5 +459,4 @@ These should be resolved during implementation planning:
 - Exact response-code reference source/update workflow
 - Exact bounded-pagination defaults and maximums
 - Exact profile setup command syntax
-- Exact Homebrew tap repository name
 - Exact CI workflow layout for sandbox integration tests

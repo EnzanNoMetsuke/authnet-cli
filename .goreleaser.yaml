@@ -65,7 +65,7 @@ release:
 brews:
   - name: authnet
     repository:
-      owner: EnzanNoMetsuke
+      owner: Exigentix
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Formula
