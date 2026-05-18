@@ -328,6 +328,7 @@ V1 canonical release artifacts:
 V1 initial convenience install channel:
 
 - Separate Homebrew tap repository: `Exigentix/homebrew-tap`
+- Homebrew cask published as `Casks/authnet.rb`
 
 Post-v1 release attestations:
 

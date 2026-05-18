@@ -62,16 +62,15 @@ release:
   prerelease: auto
   mode: replace
 
-brews:
+homebrew_casks:
   - name: authnet
+    ids:
+      - authnet
     repository:
       owner: Exigentix
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
     homepage: https://github.com/EnzanNoMetsuke/authnet-cli
     description: Authorize.Net operations CLI
-    install: |
-      bin.install "authnet"
-    test: |
-      system "#{bin}/authnet", "--version"
+    binaries:
+      - authnet

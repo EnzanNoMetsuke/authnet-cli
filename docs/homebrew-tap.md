@@ -2,7 +2,7 @@
 
 Use this guide to configure the `Exigentix/homebrew-tap` repository for `authnet-cli` releases.
 
-The source repository can remain under `EnzanNoMetsuke/authnet-cli`. GoReleaser publishes GitHub release artifacts to the source repository and writes the Homebrew formula to the separate Exigentix tap using the `HOMEBREW_TAP_GITHUB_TOKEN` Actions secret.
+The source repository can remain under `EnzanNoMetsuke/authnet-cli`. GoReleaser publishes GitHub release artifacts to the source repository and writes the Homebrew cask to the separate Exigentix tap using the `HOMEBREW_TAP_GITHUB_TOKEN` Actions secret.
 
 ## 1. Create the tap repository
 
@@ -62,13 +62,14 @@ HOMEBREW_TAP_GITHUB_TOKEN
 From the `authnet-cli` repository:
 
 ```sh
-rg -n 'owner: Exigentix|name: homebrew-tap|HOMEBREW_TAP_GITHUB_TOKEN' .goreleaser.yaml .github/workflows/release.yml
+rg -n 'homebrew_casks|owner: Exigentix|name: homebrew-tap|HOMEBREW_TAP_GITHUB_TOKEN' .goreleaser.yaml .github/workflows/release.yml
 ```
 
 Expected matches:
 
 - `.goreleaser.yaml` sets the Homebrew repository owner to `Exigentix`.
 - `.goreleaser.yaml` sets the Homebrew repository name to `homebrew-tap`.
+- `.goreleaser.yaml` uses `homebrew_casks`, not the deprecated `brews` section.
 - `.github/workflows/release.yml` exports `HOMEBREW_TAP_GITHUB_TOKEN` for the GoReleaser publish step.
 
 ## 5. Verify GitHub access
@@ -91,5 +92,27 @@ On a tagged release, GoReleaser will:
 
 1. Publish release artifacts to `EnzanNoMetsuke/authnet-cli`.
 2. Generate checksums and release notes.
-3. Commit or update `Formula/authnet.rb` in `Exigentix/homebrew-tap`.
+3. Commit or update `Casks/authnet.rb` in `Exigentix/homebrew-tap`.
 4. Use `HOMEBREW_TAP_GITHUB_TOKEN` for the cross-repository tap write.
+
+Install from the tap with:
+
+```sh
+brew tap Exigentix/tap
+brew install --cask authnet
+authnet --version
+```
+
+## 7. Formula-to-cask migration
+
+If `Exigentix/homebrew-tap` is empty before the first release, no migration work is required.
+
+If the tap already contains an older `Formula/authnet.rb`, remove it and add a root-level `tap_migrations.json` file before publishing the cask:
+
+```json
+{
+  "authnet": "authnet"
+}
+```
+
+This lets Homebrew migrate existing formula installs to the cask on upgrade.

@@ -76,12 +76,22 @@ The source repository can remain under `EnzanNoMetsuke/authnet-cli`; only the ta
 
 Before the first published release, create `Exigentix/homebrew-tap` and add a `HOMEBREW_TAP_GITHUB_TOKEN` Actions secret to this repository with permission to write to the tap. See [Homebrew Tap Setup](homebrew-tap.md) for the step-by-step configuration guide.
 
-GoReleaser will then publish `Formula/authnet.rb` during tagged releases.
+GoReleaser will then publish a Homebrew cask at `Casks/authnet.rb` during tagged releases. This matches GoReleaser's current guidance for binary releases.
 
 After the first release, install with:
 
 ```sh
 brew tap Exigentix/tap
-brew install authnet
+brew install --cask authnet
 authnet --version
 ```
+
+If the tap ever contains an older `Formula/authnet.rb`, remove that formula and add a root-level `tap_migrations.json` entry before publishing the cask:
+
+```json
+{
+  "authnet": "authnet"
+}
+```
+
+No formula-to-cask cleanup is required before the first published release if the tap is still empty.
