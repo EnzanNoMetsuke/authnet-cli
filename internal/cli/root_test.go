@@ -187,7 +187,7 @@ func TestJSONFailuresAreStructuredOnStdout(t *testing.T) {
 }
 
 func TestNotImplementedUsesExitTaxonomy(t *testing.T) {
-	stdout, stderr, code, err := executeCommandWithExit("transaction", "get")
+	stdout, stderr, code, err := executeCommandWithExit("transaction", "list")
 	if err == nil {
 		t.Fatal("expected scaffold command to fail")
 	}
@@ -197,7 +197,7 @@ func TestNotImplementedUsesExitTaxonomy(t *testing.T) {
 	if stdout != "" {
 		t.Fatalf("expected non-JSON failure stdout to stay empty, got %q", stdout)
 	}
-	assertContains(t, stderr, "transaction get is not implemented in this scaffold")
+	assertContains(t, stderr, "transaction list is not implemented in this scaffold")
 }
 
 func TestAuthTestSucceedsWithMockGateway(t *testing.T) {
@@ -291,6 +291,8 @@ func TestAuthTestMapsAuthenticationFailure(t *testing.T) {
 
 func TestAuthTestReportsConfigurationFailure(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "")
+	t.Setenv(transactionKeyEnvName, "")
 
 	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
 	if err != nil {
@@ -337,6 +339,199 @@ func TestAuthTestMapsNetworkTimeout(t *testing.T) {
 	assertContains(t, stdout, "timed out")
 	assertNotContains(t, stdout, "secret-login")
 	assertNotContains(t, stdout, "secret-key")
+}
+
+func TestTransactionGetSucceedsWithMockGateway(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newTransactionTestServer(t, http.StatusOK, "1234567890", `{
+		"messages": {
+			"resultCode": "Ok",
+			"message": [{"code": "I00001", "text": "Successful."}]
+		},
+		"transaction": {
+			"transId": "1234567890",
+			"transactionStatus": "settledSuccessfully",
+			"responseCode": 1,
+			"responseReasonCode": 1,
+			"responseReasonDescription": "secret-login approved.",
+			"authCode": "ABC123",
+			"AVSResponse": "Y",
+			"cardCodeResponse": "M",
+			"CAVVResponse": "2",
+			"submitTimeUTC": "2026-05-18T01:02:03Z",
+			"submitTimeLocal": "2026-05-17T21:02:03",
+			"settleAmount": 12.34,
+			"accountType": "Visa",
+			"accountNumber": "XXXX1111",
+			"profile": {
+				"customerProfileId": 1001,
+				"customerPaymentProfileId": 2002
+			},
+			"batch": {
+				"batchId": 3003,
+				"settlementState": "settledSuccessfully",
+				"settlementTimeUTC": "2026-05-18T03:00:00Z"
+			},
+			"billTo": {
+				"firstName": "Customer",
+				"email": "customer@example.test"
+			}
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "transaction", "get", "1234567890")
+	if err != nil {
+		t.Fatalf("expected transaction get to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"command": "authnet transaction get"`)
+	assertContains(t, stdout, `"profile_name": "sandbox-main"`)
+	assertContains(t, stdout, `"environment_classification": "sandbox"`)
+	assertContains(t, stdout, `"transaction_id": "1234567890"`)
+	assertContains(t, stdout, `"transaction_status": "settledSuccessfully"`)
+	assertContains(t, stdout, `"response_code": "1"`)
+	assertContains(t, stdout, `"settle_amount": "12.34"`)
+	assertContains(t, stdout, `"account_number": "XXXX1111"`)
+	assertContains(t, stdout, `"customer_profile_id": "1001"`)
+	assertContains(t, stdout, `"batch_id": "3003"`)
+	assertContains(t, stdout, redactedValue)
+	assertNotContains(t, stdout, "secret-login")
+	assertNotContains(t, stdout, "secret-key")
+	assertNotContains(t, stdout, "customer@example.test")
+}
+
+func TestTransactionGetUsesProductionEndpointForExplicitProductionProfile(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	sandboxServer := newTransactionTestServer(t, http.StatusInternalServerError, "1234567890", `{"messages":{"resultCode":"Error","message":[{"code":"E99999","text":"wrong endpoint"}]}}`)
+	productionServer := newTransactionTestServer(t, http.StatusOK, "1234567890", `{
+		"messages": {
+			"resultCode": "Ok",
+			"message": [{"code": "I00001", "text": "Successful."}]
+		},
+		"transaction": {
+			"transId": "1234567890",
+			"transactionStatus": "capturedPendingSettlement",
+			"responseCode": "1",
+			"accountType": "MasterCard",
+			"accountNumber": "XXXX2222"
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, sandboxServer.URL)
+	withGatewayTestEndpoint(t, environmentProduction, productionServer.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "prod-main", "--environment", "production")
+	if err != nil {
+		t.Fatalf("expected production profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "--profile", "prod-main", "transaction", "get", "1234567890")
+	if err != nil {
+		t.Fatalf("expected transaction get to use production endpoint: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"profile_name": "prod-main"`)
+	assertContains(t, stdout, `"environment_classification": "production"`)
+	assertContains(t, stdout, `"transaction_status": "capturedPendingSettlement"`)
+}
+
+func TestTransactionGetMapsNotFound(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newTransactionTestServer(t, http.StatusOK, "missing-trans", `{
+		"messages": {
+			"resultCode": "Error",
+			"message": [{"code": "E00040", "text": "The record cannot be found."}]
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("--json", "transaction", "get", "missing-trans")
+	if err == nil {
+		t.Fatal("expected missing transaction to fail")
+	}
+	if code != exitNotFound {
+		t.Fatalf("expected not found exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "transaction_not_found"`)
+	assertContains(t, stdout, `"gateway_message_code": "E00040"`)
+}
+
+func TestTransactionGetMapsGatewayFailure(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newTransactionTestServer(t, http.StatusOK, "1234567890", `{
+		"messages": {
+			"resultCode": "Error",
+			"message": [{"code": "E00027", "text": "Gateway validation failed for secret-key."}]
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("--json", "transaction", "get", "1234567890")
+	if err == nil {
+		t.Fatal("expected gateway failure")
+	}
+	if code != exitGatewayFailure {
+		t.Fatalf("expected gateway failure exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "gateway_failure"`)
+	assertContains(t, stdout, redactedValue)
+	assertNotContains(t, stdout, "secret-key")
+}
+
+func TestTransactionGetHumanOutput(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newTransactionTestServer(t, http.StatusOK, "1234567890", `{
+		"messages": {
+			"resultCode": "Ok",
+			"message": [{"code": "I00001", "text": "Successful."}]
+		},
+		"transaction": {
+			"transId": "1234567890",
+			"transactionStatus": "settledSuccessfully",
+			"responseCode": "1",
+			"settleAmount": 12.34,
+			"accountType": "Visa",
+			"accountNumber": "XXXX1111",
+			"batch": {"settlementState": "settledSuccessfully"}
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("transaction", "get", "1234567890")
+	if err != nil {
+		t.Fatalf("expected transaction get to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, "transaction: 1234567890")
+	assertContains(t, stdout, "status: settledSuccessfully")
+	assertContains(t, stdout, "response: 1")
+	assertContains(t, stdout, "settle amount: 12.34")
+	assertContains(t, stdout, "payment: Visa XXXX1111")
+	assertContains(t, stdout, "settlement: settledSuccessfully")
 }
 
 func TestExplicitColorCanApplyToHumanWarningsAndJSON(t *testing.T) {
@@ -593,6 +788,34 @@ func newAuthTestServer(t *testing.T, status int, responseBody string) *httptest.
 		}
 		if strings.Contains(text, "SENTINEL") {
 			t.Errorf("request body unexpectedly contained sentinel test value: %s", text)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(status)
+		_, _ = writer.Write([]byte(responseBody))
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func newTransactionTestServer(t *testing.T, status int, transactionID string, responseBody string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			t.Errorf("expected POST request, got %s", request.Method)
+		}
+		if got := request.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("expected JSON content type, got %q", got)
+		}
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		text := string(body)
+		if !strings.Contains(text, `"getTransactionDetailsRequest"`) {
+			t.Errorf("expected getTransactionDetailsRequest body, got %s", text)
+		}
+		if !strings.Contains(text, `"transId":"`+transactionID+`"`) {
+			t.Errorf("expected transaction ID %q in body, got %s", transactionID, text)
 		}
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(status)

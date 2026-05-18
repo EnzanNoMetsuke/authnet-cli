@@ -41,8 +41,22 @@ type authenticateTestRequest struct {
 	MerchantAuthentication merchantAuthentication `json:"merchantAuthentication"`
 }
 
+type getTransactionDetailsRequestEnvelope struct {
+	Request getTransactionDetailsRequest `json:"getTransactionDetailsRequest"`
+}
+
+type getTransactionDetailsRequest struct {
+	MerchantAuthentication merchantAuthentication `json:"merchantAuthentication"`
+	TransactionID          string                 `json:"transId"`
+}
+
 type authenticateTestResponseEnvelope struct {
 	Messages gatewayMessages `json:"messages"`
+}
+
+type getTransactionDetailsResponseEnvelope struct {
+	Messages    gatewayMessages    `json:"messages"`
+	Transaction gatewayTransaction `json:"transaction"`
 }
 
 type gatewayMessages struct {
@@ -55,9 +69,71 @@ type gatewayMessage struct {
 	Text string `json:"text"`
 }
 
+type gatewayString string
+
+func (value *gatewayString) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		*value = ""
+		return nil
+	}
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		*value = gatewayString(text)
+		return nil
+	}
+	*value = gatewayString(trimmed)
+	return nil
+}
+
+func (value gatewayString) String() string {
+	return string(value)
+}
+
 type authCredentials struct {
 	APILoginID     string
 	TransactionKey string
+}
+
+type gatewayTransaction struct {
+	TransactionID             gatewayString  `json:"transId"`
+	TransactionStatus         gatewayString  `json:"transactionStatus"`
+	ResponseCode              gatewayString  `json:"responseCode"`
+	ResponseReasonCode        gatewayString  `json:"responseReasonCode"`
+	ResponseReasonDescription gatewayString  `json:"responseReasonDescription"`
+	AuthCode                  gatewayString  `json:"authCode"`
+	AVSResponse               gatewayString  `json:"AVSResponse"`
+	CardCodeResponse          gatewayString  `json:"cardCodeResponse"`
+	CAVVResponse              gatewayString  `json:"CAVVResponse"`
+	SubmitTimeUTC             gatewayString  `json:"submitTimeUTC"`
+	SubmitTimeLocal           gatewayString  `json:"submitTimeLocal"`
+	SettleAmount              gatewayString  `json:"settleAmount"`
+	Batch                     gatewayBatch   `json:"batch"`
+	Payment                   gatewayPayment `json:"payment"`
+	AccountType               gatewayString  `json:"accountType"`
+	AccountNumber             gatewayString  `json:"accountNumber"`
+	Profile                   gatewayProfile `json:"profile"`
+}
+
+type gatewayBatch struct {
+	BatchID           gatewayString `json:"batchId"`
+	SettlementState   gatewayString `json:"settlementState"`
+	SettlementTimeUTC gatewayString `json:"settlementTimeUTC"`
+}
+
+type gatewayPayment struct {
+	CreditCard gatewayCreditCard `json:"creditCard"`
+}
+
+type gatewayCreditCard struct {
+	CardNumber     gatewayString `json:"cardNumber"`
+	ExpirationDate gatewayString `json:"expirationDate"`
+	CardType       gatewayString `json:"cardType"`
+}
+
+type gatewayProfile struct {
+	CustomerProfileID        gatewayString `json:"customerProfileId"`
+	CustomerPaymentProfileID gatewayString `json:"customerPaymentProfileId"`
 }
 
 type selectedProfile struct {
@@ -96,14 +172,57 @@ func (client gatewayClient) authenticate(ctx context.Context, credentials authCr
 			},
 		},
 	}
+	responseBody, err := client.post(ctx, requestBody, "authentication")
+	if err != nil {
+		return authenticateTestResponseEnvelope{}, err
+	}
+
+	var parsed authenticateTestResponseEnvelope
+	if err := decodeGatewayJSON(responseBody, &parsed); err != nil {
+		return authenticateTestResponseEnvelope{}, cliError{
+			exitCode: exitGatewayFailure,
+			code:     "gateway_response_invalid",
+			message:  "Authorize.Net returned an invalid authentication response",
+		}
+	}
+	return parsed, nil
+}
+
+func (client gatewayClient) getTransactionDetails(ctx context.Context, credentials authCredentials, transactionID string) (getTransactionDetailsResponseEnvelope, error) {
+	requestBody := getTransactionDetailsRequestEnvelope{
+		Request: getTransactionDetailsRequest{
+			MerchantAuthentication: merchantAuthentication{
+				Name:           credentials.APILoginID,
+				TransactionKey: credentials.TransactionKey,
+			},
+			TransactionID: transactionID,
+		},
+	}
+	responseBody, err := client.post(ctx, requestBody, "transaction lookup")
+	if err != nil {
+		return getTransactionDetailsResponseEnvelope{}, err
+	}
+
+	var parsed getTransactionDetailsResponseEnvelope
+	if err := decodeGatewayJSON(responseBody, &parsed); err != nil {
+		return getTransactionDetailsResponseEnvelope{}, cliError{
+			exitCode: exitGatewayFailure,
+			code:     "gateway_response_invalid",
+			message:  "Authorize.Net returned an invalid transaction lookup response",
+		}
+	}
+	return parsed, nil
+}
+
+func (client gatewayClient) post(ctx context.Context, requestBody any, operation string) ([]byte, error) {
 	body, err := json.Marshal(requestBody)
 	if err != nil {
-		return authenticateTestResponseEnvelope{}, fmt.Errorf("encode authentication request: %w", err)
+		return nil, fmt.Errorf("encode %s request: %w", operation, err)
 	}
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return authenticateTestResponseEnvelope{}, fmt.Errorf("create authentication request: %w", err)
+		return nil, fmt.Errorf("create %s request: %w", operation, err)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
@@ -111,16 +230,16 @@ func (client gatewayClient) authenticate(ctx context.Context, credentials authCr
 	response, err := client.httpClient.Do(request)
 	if err != nil {
 		if isTimeoutError(err) {
-			return authenticateTestResponseEnvelope{}, cliError{
+			return nil, cliError{
 				exitCode: exitUnavailable,
 				code:     "gateway_unavailable",
-				message:  "Authorize.Net authentication request timed out",
+				message:  fmt.Sprintf("Authorize.Net %s request timed out", operation),
 			}
 		}
-		return authenticateTestResponseEnvelope{}, cliError{
+		return nil, cliError{
 			exitCode: exitUnavailable,
 			code:     "gateway_unavailable",
-			message:  fmt.Sprintf("Authorize.Net authentication request failed: %v", err),
+			message:  fmt.Sprintf("Authorize.Net %s request failed: %v", operation, err),
 		}
 	}
 	defer func() {
@@ -129,25 +248,22 @@ func (client gatewayClient) authenticate(ctx context.Context, credentials authCr
 
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {
-		return authenticateTestResponseEnvelope{}, fmt.Errorf("read authentication response: %w", err)
+		return nil, fmt.Errorf("read %s response: %w", operation, err)
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return authenticateTestResponseEnvelope{}, cliError{
+		return nil, cliError{
 			exitCode: exitGatewayFailure,
 			code:     "gateway_failure",
 			message:  fmt.Sprintf("Authorize.Net returned HTTP %d", response.StatusCode),
 		}
 	}
+	return responseBody, nil
+}
 
-	var parsed authenticateTestResponseEnvelope
-	if err := json.Unmarshal(bytes.TrimPrefix(responseBody, []byte("\xef\xbb\xbf")), &parsed); err != nil {
-		return authenticateTestResponseEnvelope{}, cliError{
-			exitCode: exitGatewayFailure,
-			code:     "gateway_response_invalid",
-			message:  "Authorize.Net returned an invalid authentication response",
-		}
-	}
-	return parsed, nil
+func decodeGatewayJSON(data []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))))
+	decoder.UseNumber()
+	return decoder.Decode(target)
 }
 
 func isTimeoutError(err error) bool {
@@ -165,7 +281,7 @@ func isTimeoutError(err error) bool {
 	return false
 }
 
-func loadSelectedProfileWithCredentials(options *globalOptions) (selectedProfile, error) {
+func loadSelectedProfileWithCredentials(options *globalOptions, commandName string) (selectedProfile, error) {
 	store, err := newProfileStore()
 	if err != nil {
 		return selectedProfile{}, err
@@ -179,7 +295,7 @@ func loadSelectedProfileWithCredentials(options *globalOptions) (selectedProfile
 		name = file.DefaultProfile
 	}
 	if name == "" {
-		return selectedProfile{}, newUsageError("auth test requires --profile or a configured default profile")
+		return selectedProfile{}, newUsageError("%s requires --profile or a configured default profile", commandName)
 	}
 	for _, profile := range file.Profiles {
 		if profile.Name != name {
@@ -188,7 +304,7 @@ func loadSelectedProfileWithCredentials(options *globalOptions) (selectedProfile
 		if err := validateProfile(profile); err != nil {
 			return selectedProfile{}, err
 		}
-		credentials, err := credentialsForProfile(profile)
+		credentials, err := credentialsForProfile(profile, commandName)
 		if err != nil {
 			return selectedProfile{}, err
 		}
@@ -202,7 +318,7 @@ func loadSelectedProfileWithCredentials(options *globalOptions) (selectedProfile
 	return selectedProfile{}, newUsageError("profile %q does not exist", name)
 }
 
-func credentialsForProfile(profile profileEntry) (authCredentials, error) {
+func credentialsForProfile(profile profileEntry, commandName string) (authCredentials, error) {
 	switch profile.CredentialSource.Type {
 	case credentialSourceEnv:
 		loginID := os.Getenv(profile.CredentialSource.APILoginIDEnv)
@@ -222,7 +338,7 @@ func credentialsForProfile(profile profileEntry) (authCredentials, error) {
 			TransactionKey: transactionKey,
 		}, nil
 	case credentialSourceSecureRef:
-		return authCredentials{}, newUsageError("auth test cannot read secure local credential references yet; use env credential source")
+		return authCredentials{}, newUsageError("%s cannot read secure local credential references yet; use env credential source", commandName)
 	default:
 		return authCredentials{}, newUsageError("invalid credential source type %q: expected env or secure-local-reference", profile.CredentialSource.Type)
 	}

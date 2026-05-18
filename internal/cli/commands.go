@@ -223,9 +223,10 @@ func newTransactionCommand() *cobra.Command {
 		Short: "Inspect Authorize.Net transactions",
 	}
 	transaction.AddCommand(&cobra.Command{
-		Use:   "get",
+		Use:   "get TRANSACTION_ID",
 		Short: "Inspect one transaction",
-		RunE:  notImplemented("transaction get"),
+		Args:  cobra.ExactArgs(1),
+		RunE:  runTransactionGet,
 	})
 	transaction.AddCommand(&cobra.Command{
 		Use:   "list",
@@ -345,9 +346,48 @@ type authTestData struct {
 	Message                   string `json:"message"`
 }
 
+type transactionLookupData struct {
+	TransactionID             string                 `json:"transaction_id"`
+	ProfileName               string                 `json:"profile_name"`
+	EnvironmentClassification string                 `json:"environment_classification"`
+	TransactionStatus         string                 `json:"transaction_status,omitempty"`
+	ResponseCode              string                 `json:"response_code,omitempty"`
+	ResponseReasonCode        string                 `json:"response_reason_code,omitempty"`
+	ResponseReasonDescription string                 `json:"response_reason_description,omitempty"`
+	AuthCode                  string                 `json:"auth_code,omitempty"`
+	SubmitTimeUTC             string                 `json:"submit_time_utc,omitempty"`
+	SubmitTimeLocal           string                 `json:"submit_time_local,omitempty"`
+	SettleAmount              string                 `json:"settle_amount,omitempty"`
+	SettlementState           string                 `json:"settlement_state,omitempty"`
+	SettlementTimeUTC         string                 `json:"settlement_time_utc,omitempty"`
+	Payment                   paymentSummary         `json:"payment,omitempty"`
+	CustomerProfile           customerProfileSummary `json:"customer_profile,omitempty"`
+	GatewayDetails            gatewayDetailsSummary  `json:"gateway_details,omitempty"`
+	GatewayMessageCode        string                 `json:"gateway_message_code,omitempty"`
+	Message                   string                 `json:"message,omitempty"`
+}
+
+type paymentSummary struct {
+	AccountType   string `json:"account_type,omitempty"`
+	AccountNumber string `json:"account_number,omitempty"`
+	CardType      string `json:"card_type,omitempty"`
+}
+
+type customerProfileSummary struct {
+	CustomerProfileID        string `json:"customer_profile_id,omitempty"`
+	CustomerPaymentProfileID string `json:"customer_payment_profile_id,omitempty"`
+}
+
+type gatewayDetailsSummary struct {
+	BatchID          string `json:"batch_id,omitempty"`
+	AVSResponse      string `json:"avs_response,omitempty"`
+	CardCodeResponse string `json:"card_code_response,omitempty"`
+	CAVVResponse     string `json:"cavv_response,omitempty"`
+}
+
 func runAuthTest(cmd *cobra.Command, _ []string) error {
 	options := optionsFromCommand(cmd)
-	profile, err := loadSelectedProfileWithCredentials(options)
+	profile, err := loadSelectedProfileWithCredentials(options, "auth test")
 	if err != nil {
 		return err
 	}
@@ -408,11 +448,148 @@ func runAuthTest(cmd *cobra.Command, _ []string) error {
 	})
 }
 
+func runTransactionGet(cmd *cobra.Command, args []string) error {
+	transactionID := strings.TrimSpace(args[0])
+	if transactionID == "" {
+		return newUsageError("transaction get requires a transaction identifier")
+	}
+
+	options := optionsFromCommand(cmd)
+	profile, err := loadSelectedProfileWithCredentials(options, "transaction get")
+	if err != nil {
+		return err
+	}
+	client, err := newGatewayClient(profile.Entry.Environment)
+	if err != nil {
+		return err
+	}
+	response, err := client.getTransactionDetails(cmd.Context(), profile.Credentials, transactionID)
+	if err != nil {
+		return err
+	}
+
+	message := firstGatewayMessage(response.Messages.Message)
+	data := transactionLookupData{
+		TransactionID:             firstNonEmpty(response.Transaction.TransactionID.String(), transactionID),
+		ProfileName:               profile.Entry.Name,
+		EnvironmentClassification: profile.Entry.Environment,
+		GatewayMessageCode:        message.Code,
+		Message:                   message.Text,
+	}
+	if !strings.EqualFold(response.Messages.ResultCode, "Ok") {
+		return renderTransactionLookupFailure(cmd, response.Messages.ResultCode, data)
+	}
+
+	data = data.withTransaction(response.Transaction)
+	data = sanitizeForOutput(data).(transactionLookupData)
+	return renderResult(cmd, commandResult{
+		Data: data,
+		Human: func(writer io.Writer) error {
+			if _, writeErr := fmt.Fprintf(writer, "transaction: %s\nstatus: %s\nresponse: %s\n",
+				data.TransactionID,
+				data.TransactionStatus,
+				data.ResponseCode,
+			); writeErr != nil {
+				return writeErr
+			}
+			if data.SettleAmount != "" {
+				if _, writeErr := fmt.Fprintf(writer, "settle amount: %s\n", data.SettleAmount); writeErr != nil {
+					return writeErr
+				}
+			}
+			if data.Payment.AccountNumber != "" || data.Payment.AccountType != "" {
+				if _, writeErr := fmt.Fprintf(writer, "payment: %s %s\n", data.Payment.AccountType, data.Payment.AccountNumber); writeErr != nil {
+					return writeErr
+				}
+			}
+			if data.SettlementState != "" {
+				if _, writeErr := fmt.Fprintf(writer, "settlement: %s\n", data.SettlementState); writeErr != nil {
+					return writeErr
+				}
+			}
+			return nil
+		},
+	})
+}
+
+func renderTransactionLookupFailure(cmd *cobra.Command, resultCode string, data transactionLookupData) error {
+	if data.Message == "" {
+		data.Message = "transaction lookup failed"
+	}
+	data = sanitizeForOutput(data).(transactionLookupData)
+	errorCode := "gateway_failure"
+	exitCode := exitGatewayFailure
+	if data.GatewayMessageCode == "E00040" || strings.Contains(strings.ToLower(data.Message), "not found") {
+		errorCode = "transaction_not_found"
+		exitCode = exitNotFound
+	} else if data.GatewayMessageCode == "E00007" || data.GatewayMessageCode == "E00008" {
+		errorCode = "authentication_failed"
+		exitCode = exitAuthFailure
+	}
+	renderErr := renderResult(cmd, commandResult{
+		Data: data,
+		Errors: []structuredError{{
+			Code:    errorCode,
+			Message: data.Message,
+		}},
+		Human: func(writer io.Writer) error {
+			_, writeErr := fmt.Fprintf(writer, "transaction: %s\nlookup: failed\nresult: %s\nmessage: %s\n",
+				data.TransactionID,
+				resultCode,
+				data.Message,
+			)
+			return writeErr
+		},
+	})
+	if renderErr != nil {
+		return renderErr
+	}
+	return renderedError{exitCode: exitCode, message: data.Message}
+}
+
+func (data transactionLookupData) withTransaction(transaction gatewayTransaction) transactionLookupData {
+	data.TransactionStatus = transaction.TransactionStatus.String()
+	data.ResponseCode = transaction.ResponseCode.String()
+	data.ResponseReasonCode = transaction.ResponseReasonCode.String()
+	data.ResponseReasonDescription = transaction.ResponseReasonDescription.String()
+	data.AuthCode = transaction.AuthCode.String()
+	data.SubmitTimeUTC = transaction.SubmitTimeUTC.String()
+	data.SubmitTimeLocal = transaction.SubmitTimeLocal.String()
+	data.SettleAmount = transaction.SettleAmount.String()
+	data.SettlementState = transaction.Batch.SettlementState.String()
+	data.SettlementTimeUTC = transaction.Batch.SettlementTimeUTC.String()
+	data.Payment = paymentSummary{
+		AccountType:   firstNonEmpty(transaction.AccountType.String(), transaction.Payment.CreditCard.CardType.String()),
+		AccountNumber: firstNonEmpty(transaction.AccountNumber.String(), transaction.Payment.CreditCard.CardNumber.String()),
+		CardType:      transaction.Payment.CreditCard.CardType.String(),
+	}
+	data.CustomerProfile = customerProfileSummary{
+		CustomerProfileID:        transaction.Profile.CustomerProfileID.String(),
+		CustomerPaymentProfileID: transaction.Profile.CustomerPaymentProfileID.String(),
+	}
+	data.GatewayDetails = gatewayDetailsSummary{
+		BatchID:          transaction.Batch.BatchID.String(),
+		AVSResponse:      transaction.AVSResponse.String(),
+		CardCodeResponse: transaction.CardCodeResponse.String(),
+		CAVVResponse:     transaction.CAVVResponse.String(),
+	}
+	return data
+}
+
 func firstGatewayMessage(messages []gatewayMessage) gatewayMessage {
 	if len(messages) == 0 {
 		return gatewayMessage{}
 	}
 	return messages[0]
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func runProfileSetup(cmd *cobra.Command, options *profileSetupOptions) error {
