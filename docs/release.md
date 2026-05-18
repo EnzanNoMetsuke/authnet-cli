@@ -74,7 +74,9 @@ Exigentix/homebrew-tap
 
 The source repository can remain under `EnzanNoMetsuke/authnet-cli`; only the tap repository needs to live under the Exigentix organization.
 
-Before the first published release, create `Exigentix/homebrew-tap` and add a `HOMEBREW_TAP_GITHUB_TOKEN` Actions secret to this repository with permission to write to the tap. GoReleaser will then publish `Formula/authnet.rb` during tagged releases.
+Before the first published release, create `Exigentix/homebrew-tap` and add a `HOMEBREW_TAP_GITHUB_TOKEN` Actions secret to this repository with permission to write to the tap. See [Homebrew Tap Setup](homebrew-tap.md) for the step-by-step configuration guide.
+
+GoReleaser will then publish `Formula/authnet.rb` during tagged releases.
 
 After the first release, install with:
 
