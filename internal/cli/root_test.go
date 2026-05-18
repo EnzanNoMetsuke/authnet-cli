@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func executeCommand(args ...string) (string, string, error) {
@@ -184,7 +187,7 @@ func TestJSONFailuresAreStructuredOnStdout(t *testing.T) {
 }
 
 func TestNotImplementedUsesExitTaxonomy(t *testing.T) {
-	stdout, stderr, code, err := executeCommandWithExit("auth", "test")
+	stdout, stderr, code, err := executeCommandWithExit("transaction", "get")
 	if err == nil {
 		t.Fatal("expected scaffold command to fail")
 	}
@@ -194,7 +197,146 @@ func TestNotImplementedUsesExitTaxonomy(t *testing.T) {
 	if stdout != "" {
 		t.Fatalf("expected non-JSON failure stdout to stay empty, got %q", stdout)
 	}
-	assertContains(t, stderr, "auth test is not implemented in this scaffold")
+	assertContains(t, stderr, "transaction get is not implemented in this scaffold")
+}
+
+func TestAuthTestSucceedsWithMockGateway(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newAuthTestServer(t, http.StatusOK, `{
+		"messages": {
+			"resultCode": "Ok",
+			"message": [{"code": "I00001", "text": "Successful."}]
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "auth", "test")
+	if err != nil {
+		t.Fatalf("expected auth test to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"command": "authnet auth test"`)
+	assertContains(t, stdout, `"profile_name": "sandbox-main"`)
+	assertContains(t, stdout, `"environment_classification": "sandbox"`)
+	assertContains(t, stdout, `"authenticated": true`)
+	assertContains(t, stdout, `"gateway_message_code": "I00001"`)
+	assertNotContains(t, stdout, "secret-login")
+	assertNotContains(t, stdout, "secret-key")
+}
+
+func TestAuthTestUsesProductionEndpointForProductionProfile(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	sandboxServer := newAuthTestServer(t, http.StatusInternalServerError, `{"messages":{"resultCode":"Error","message":[{"code":"E99999","text":"wrong endpoint"}]}}`)
+	productionServer := newAuthTestServer(t, http.StatusOK, `{
+		"messages": {
+			"resultCode": "Ok",
+			"message": [{"code": "I00001", "text": "Successful."}]
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, sandboxServer.URL)
+	withGatewayTestEndpoint(t, environmentProduction, productionServer.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "prod-main", "--environment", "production")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "--profile", "prod-main", "auth", "test")
+	if err != nil {
+		t.Fatalf("expected auth test to use production endpoint: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"profile_name": "prod-main"`)
+	assertContains(t, stdout, `"environment_classification": "production"`)
+	assertContains(t, stdout, `"authenticated": true`)
+}
+
+func TestAuthTestMapsAuthenticationFailure(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newAuthTestServer(t, http.StatusOK, `{
+		"messages": {
+			"resultCode": "Error",
+			"message": [{"code": "E00007", "text": "secret-login rejected."}]
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("--json", "auth", "test")
+	if err == nil {
+		t.Fatal("expected auth failure")
+	}
+	if code != exitAuthFailure {
+		t.Fatalf("expected auth failure exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"authenticated": false`)
+	assertContains(t, stdout, `"code": "authentication_failed"`)
+	assertContains(t, stdout, `"gateway_message_code": "E00007"`)
+	assertContains(t, stdout, redactedValue)
+	assertNotContains(t, stdout, "secret-login")
+	assertNotContains(t, stdout, "secret-key")
+}
+
+func TestAuthTestReportsConfigurationFailure(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("--json", "auth", "test")
+	if err == nil {
+		t.Fatal("expected missing credentials to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "usage_or_config_error"`)
+	assertContains(t, stdout, "missing credential environment variables")
+}
+
+func TestAuthTestMapsNetworkTimeout(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+	}))
+	t.Cleanup(server.Close)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+	originalClient := gatewayHTTPClient
+	gatewayHTTPClient = &http.Client{Timeout: time.Millisecond}
+	t.Cleanup(func() {
+		gatewayHTTPClient = originalClient
+	})
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("--json", "auth", "test")
+	if err == nil {
+		t.Fatal("expected timeout to fail")
+	}
+	if code != exitUnavailable {
+		t.Fatalf("expected unavailable exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "gateway_unavailable"`)
+	assertContains(t, stdout, "timed out")
+	assertNotContains(t, stdout, "secret-login")
+	assertNotContains(t, stdout, "secret-key")
 }
 
 func TestExplicitColorCanApplyToHumanWarningsAndJSON(t *testing.T) {
@@ -430,6 +572,54 @@ func TestRedactionRemovesSyntheticSentinelsFromWarnings(t *testing.T) {
 	}
 	assertContains(t, stderr.String(), redactedValue)
 	assertNotContains(t, stderr.String(), "SENTINEL_CUSTOMER_PII")
+}
+
+func newAuthTestServer(t *testing.T, status int, responseBody string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			t.Errorf("expected POST request, got %s", request.Method)
+		}
+		if got := request.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("expected JSON content type, got %q", got)
+		}
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		text := string(body)
+		if !strings.Contains(text, `"authenticateTestRequest"`) {
+			t.Errorf("expected authenticateTestRequest body, got %s", text)
+		}
+		if strings.Contains(text, "SENTINEL") {
+			t.Errorf("request body unexpectedly contained sentinel test value: %s", text)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(status)
+		_, _ = writer.Write([]byte(responseBody))
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func withGatewayTestEndpoint(t *testing.T, environment string, endpoint string) {
+	t.Helper()
+	switch environment {
+	case environmentSandbox:
+		original := sandboxAPIEndpoint
+		sandboxAPIEndpoint = endpoint
+		t.Cleanup(func() {
+			sandboxAPIEndpoint = original
+		})
+	case environmentProduction:
+		original := productionAPIEndpoint
+		productionAPIEndpoint = endpoint
+		t.Cleanup(func() {
+			productionAPIEndpoint = original
+		})
+	default:
+		t.Fatalf("unsupported test endpoint environment %q", environment)
+	}
 }
 
 func assertContains(t *testing.T, text string, want string) {

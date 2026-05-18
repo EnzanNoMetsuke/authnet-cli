@@ -134,7 +134,7 @@ func newAuthCommand() *cobra.Command {
 	auth.AddCommand(&cobra.Command{
 		Use:   "test",
 		Short: "Test selected profile authentication",
-		RunE:  notImplemented("auth test"),
+		RunE:  runAuthTest,
 	})
 	return auth
 }
@@ -333,6 +333,86 @@ type profileMutationData struct {
 	ConfigPath  string `json:"config_path"`
 	Default     bool   `json:"default,omitempty"`
 	Removed     bool   `json:"removed,omitempty"`
+}
+
+type authTestData struct {
+	Authenticated             bool   `json:"authenticated"`
+	ProfileName               string `json:"profile_name"`
+	EnvironmentClassification string `json:"environment_classification"`
+	CredentialSource          string `json:"credential_source"`
+	GatewayResultCode         string `json:"gateway_result_code,omitempty"`
+	GatewayMessageCode        string `json:"gateway_message_code,omitempty"`
+	Message                   string `json:"message"`
+}
+
+func runAuthTest(cmd *cobra.Command, _ []string) error {
+	options := optionsFromCommand(cmd)
+	profile, err := loadSelectedProfileWithCredentials(options)
+	if err != nil {
+		return err
+	}
+	client, err := newGatewayClient(profile.Entry.Environment)
+	if err != nil {
+		return err
+	}
+	response, err := client.authenticate(cmd.Context(), profile.Credentials)
+	if err != nil {
+		return err
+	}
+
+	message := firstGatewayMessage(response.Messages.Message)
+	data := authTestData{
+		Authenticated:             strings.EqualFold(response.Messages.ResultCode, "Ok"),
+		ProfileName:               profile.Entry.Name,
+		EnvironmentClassification: profile.Entry.Environment,
+		CredentialSource:          profile.Entry.CredentialSource.Type,
+		GatewayResultCode:         response.Messages.ResultCode,
+		GatewayMessageCode:        message.Code,
+		Message:                   message.Text,
+	}
+	if data.Message == "" {
+		data.Message = "authentication response did not include a message"
+	}
+	data = sanitizeForOutput(data).(authTestData)
+	if !data.Authenticated {
+		renderErr := renderResult(cmd, commandResult{
+			Data: data,
+			Errors: []structuredError{{
+				Code:    "authentication_failed",
+				Message: data.Message,
+			}},
+			Human: func(writer io.Writer) error {
+				_, writeErr := fmt.Fprintf(writer, "profile: %s\nenvironment: %s\nauthentication: failed\nmessage: %s\n",
+					data.ProfileName,
+					data.EnvironmentClassification,
+					data.Message,
+				)
+				return writeErr
+			},
+		})
+		if renderErr != nil {
+			return renderErr
+		}
+		return renderedError{exitCode: exitAuthFailure, message: data.Message}
+	}
+	return renderResult(cmd, commandResult{
+		Data: data,
+		Human: func(writer io.Writer) error {
+			_, writeErr := fmt.Fprintf(writer, "profile: %s\nenvironment: %s\nauthentication: ok\nmessage: %s\n",
+				data.ProfileName,
+				data.EnvironmentClassification,
+				data.Message,
+			)
+			return writeErr
+		},
+	})
+}
+
+func firstGatewayMessage(messages []gatewayMessage) gatewayMessage {
+	if len(messages) == 0 {
+		return gatewayMessage{}
+	}
+	return messages[0]
 }
 
 func runProfileSetup(cmd *cobra.Command, options *profileSetupOptions) error {
