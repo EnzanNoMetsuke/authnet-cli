@@ -35,6 +35,15 @@ func (err cliError) Error() string {
 	return err.message
 }
 
+type renderedError struct {
+	exitCode ExitCode
+	message  string
+}
+
+func (err renderedError) Error() string {
+	return err.message
+}
+
 type warning struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -59,13 +68,14 @@ type envelope struct {
 type commandResult struct {
 	Data     any
 	Warnings []warning
+	Errors   []structuredError
 	Human    func(io.Writer) error
 }
 
 func renderResult(cmd *cobra.Command, result commandResult) error {
 	options := optionsFromCommand(cmd)
 	if options.JSON {
-		return writeOutputJSON(cmd.OutOrStdout(), newEnvelope(cmd, result.Data, result.Warnings, nil), colorEnabled(options))
+		return writeOutputJSON(cmd.OutOrStdout(), newEnvelope(cmd, result.Data, result.Warnings, result.Errors), colorEnabled(options))
 	}
 	if result.Human == nil {
 		return nil
@@ -101,7 +111,7 @@ func newEnvelope(cmd *cobra.Command, data any, warnings []warning, errs []struct
 		SchemaVersion:             buildFromCommand(cmd).SchemaVersion,
 		Command:                   cmd.CommandPath(),
 		ProfileName:               options.Profile,
-		EnvironmentClassification: "",
+		EnvironmentClassification: options.Environment,
 		Redacted:                  redactedByDefault,
 		Warnings:                  warnings,
 		Errors:                    errs,
@@ -145,6 +155,10 @@ func structuredFailure(cmd *cobra.Command, err error) (envelope, ExitCode) {
 }
 
 func exitCodeForError(err error) ExitCode {
+	var rendered renderedError
+	if errors.As(err, &rendered) {
+		return rendered.exitCode
+	}
 	var appErr cliError
 	if errors.As(err, &appErr) {
 		return appErr.exitCode

@@ -2,6 +2,9 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -14,11 +17,12 @@ const (
 )
 
 type globalOptions struct {
-	JSON       bool
-	Automation bool
-	Profile    string
-	Color      string
-	NoColor    bool
+	JSON        bool
+	Automation  bool
+	Profile     string
+	Environment string
+	Color       string
+	NoColor     bool
 }
 
 // NewRootCommand builds the root authnet command with local-only scaffold behavior.
@@ -69,6 +73,10 @@ func Execute(command *cobra.Command) ExitCode {
 	if err == nil {
 		return exitSuccess
 	}
+	var rendered renderedError
+	if errors.As(err, &rendered) {
+		return rendered.exitCode
+	}
 
 	target := executed
 	if target == nil {
@@ -89,6 +97,15 @@ func Execute(command *cobra.Command) ExitCode {
 }
 
 func validateGlobalOptions(options *globalOptions) error {
+	if envProfile := strings.TrimSpace(os.Getenv(profileEnvName)); envProfile != "" && options.Profile == "" {
+		options.Profile = envProfile
+	}
+	if envEnvironment := strings.TrimSpace(os.Getenv(environmentEnvName)); envEnvironment != "" {
+		if err := validateEnvironment(envEnvironment); err != nil {
+			return err
+		}
+		options.Environment = envEnvironment
+	}
 	switch options.Color {
 	case "auto", "always", "never":
 	default:

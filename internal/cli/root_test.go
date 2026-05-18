@@ -3,16 +3,22 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func executeCommand(args ...string) (string, string, error) {
-	stdout, stderr, _, err := executeCommandWithExit(args...)
+	stdout, stderr, _, err := executeCommandWithInput("", args...)
 	return stdout, stderr, err
 }
 
 func executeCommandWithExit(args ...string) (string, string, ExitCode, error) {
+	return executeCommandWithInput("", args...)
+}
+
+func executeCommandWithInput(input string, args ...string) (string, string, ExitCode, error) {
 	command := NewRootCommand(BuildInfo{
 		Version:        "0.1.0-test",
 		Commit:         "test-commit",
@@ -25,6 +31,7 @@ func executeCommandWithExit(args ...string) (string, string, ExitCode, error) {
 	var stderr bytes.Buffer
 	command.SetOut(&stdout)
 	command.SetErr(&stderr)
+	command.SetIn(strings.NewReader(input))
 	command.SetArgs(args)
 
 	code := Execute(command)
@@ -199,6 +206,143 @@ func TestExplicitColorCanApplyToHumanWarningsAndJSON(t *testing.T) {
 		t.Fatalf("expected JSON version command to succeed: %v", err)
 	}
 	assertContains(t, stdout, "\x1b[36m")
+}
+
+func TestProfileSetupListValidateAndRemove(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	t.Setenv("PROD_LOGIN", "prod-login")
+	t.Setenv("PROD_KEY", "prod-key")
+
+	stdout, stderr, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected sandbox profile setup to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"name": "sandbox-main"`)
+	assertContains(t, stdout, `"default": true`)
+
+	stdout, stderr, err = executeCommand("--automation", "profile", "setup", "--name", "prod-main", "--environment", "production", "--api-login-id-env", "PROD_LOGIN", "--transaction-key-env", "PROD_KEY")
+	if err != nil {
+		t.Fatalf("expected production profile setup to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	stdout, _, err = executeCommand("profile", "list")
+	if err != nil {
+		t.Fatalf("expected profile list to succeed: %v", err)
+	}
+	assertContains(t, stdout, "sandbox-main\tsandbox\tenv default")
+	assertContains(t, stdout, "prod-main\tproduction\tPRODUCTION\tenv")
+
+	stdout, stderr, err = executeCommand("--json", "config", "validate")
+	if err != nil {
+		t.Fatalf("expected config validate to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"valid": true`)
+	assertContains(t, stdout, `"profiles": [`)
+
+	configBytes, err := os.ReadFile(filepath.Join(configDir, profileConfigFileName)) // #nosec G304 - test reads the command output from a t.TempDir config root.
+	if err != nil {
+		t.Fatalf("expected profile config file to exist: %v", err)
+	}
+	configText := string(configBytes)
+	assertContains(t, configText, `"api_login_id_env": "AUTHNET_API_LOGIN_ID"`)
+	assertNotContains(t, configText, "secret-login")
+	assertNotContains(t, configText, "secret-key")
+	assertNotContains(t, configText, "prod-login")
+	assertNotContains(t, configText, "prod-key")
+
+	stdout, stderr, err = executeCommand("--automation", "profile", "remove", "--name", "prod-main")
+	if err != nil {
+		t.Fatalf("expected profile remove to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"removed": true`)
+	stdout, _, err = executeCommand("profile", "list")
+	if err != nil {
+		t.Fatalf("expected profile list after remove to succeed: %v", err)
+	}
+	assertNotContains(t, stdout, "prod-main")
+}
+
+func TestInteractiveProfileSetupPromptsForMissingValues(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+
+	stdout, stderr, _, err := executeCommandWithInput("interactive-sandbox\nsandbox\n", "profile", "setup", "--default")
+	if err != nil {
+		t.Fatalf("expected interactive setup to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stderr, "profile name:")
+	assertContains(t, stderr, "environment:")
+	assertContains(t, stdout, "profile saved: interactive-sandbox (sandbox) default")
+}
+
+func TestProfileSetupRejectsProductionDefault(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+
+	stdout, stderr, code, err := executeCommandWithExit("--automation", "profile", "setup", "--name", "prod", "--environment", "production", "--default")
+	if err == nil {
+		t.Fatal("expected production default setup to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, err.Error(), "must be sandbox-classified")
+}
+
+func TestProfileSetupRejectsInvalidEnvironment(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+
+	_, _, code, err := executeCommandWithExit("--automation", "profile", "setup", "--name", "bad", "--environment", "staging")
+	if err == nil {
+		t.Fatal("expected invalid environment to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d", code)
+	}
+	assertContains(t, err.Error(), "expected sandbox or production")
+}
+
+func TestConfigValidateReportsMissingCredentialSources(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--api-login-id-env", "MISSING_LOGIN", "--transaction-key-env", "MISSING_KEY")
+	if err != nil {
+		t.Fatalf("expected setup with credential references to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("--json", "config", "validate")
+	if err == nil {
+		t.Fatal("expected config validate to fail with missing credential sources")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "profile_config_invalid"`)
+	assertContains(t, stdout, "MISSING_LOGIN, MISSING_KEY")
+}
+
+func TestPathsUsesConfigDirectoryOverride(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+
+	stdout, _, err := executeCommand("--json", "paths")
+	if err != nil {
+		t.Fatalf("expected paths to succeed: %v", err)
+	}
+	assertContains(t, stdout, `"config_directory": "`+configDir+`"`)
+	assertContains(t, stdout, `"profile_config_file": "`+filepath.Join(configDir, profileConfigFileName)+`"`)
+}
+
+func TestEnvironmentOverridesAppearInJSONEnvelope(t *testing.T) {
+	t.Setenv(profileEnvName, "env-profile")
+	t.Setenv(environmentEnvName, environmentSandbox)
+
+	stdout, _, err := executeCommand("--json", "version")
+	if err != nil {
+		t.Fatalf("expected version with environment overrides to succeed: %v", err)
+	}
+	assertContains(t, stdout, `"profile_name": "env-profile"`)
+	assertContains(t, stdout, `"environment_classification": "sandbox"`)
 }
 
 func assertContains(t *testing.T, text string, want string) {

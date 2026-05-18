@@ -1,10 +1,11 @@
 package cli
 
 import (
+	"bufio"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -53,6 +54,7 @@ func newPathsCommand() *cobra.Command {
 			return renderResult(cmd, commandResult{
 				Data: pathsData{
 					ConfigDirectory:             configDir,
+					ProfileConfigFile:           filepath.Join(configDir, profileConfigFileName),
 					SensitiveDataPersistence:    "none",
 					HasSensitivePersistencePath: false,
 				},
@@ -74,7 +76,52 @@ func newConfigCommand() *cobra.Command {
 	config.AddCommand(&cobra.Command{
 		Use:   "validate",
 		Short: "Validate local non-secret profile config",
-		RunE:  notImplemented("config validate"),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			store, err := newProfileStore()
+			if err != nil {
+				return err
+			}
+			file, err := store.load()
+			if err != nil {
+				return err
+			}
+			result := validateProfileFile(file)
+			result.ConfigPath = store.path
+			warnings := result.Warnings
+			if len(file.Profiles) == 0 {
+				warnings = append(warnings, warning{
+					Code:    "no_profiles",
+					Message: "no profiles are configured.",
+				})
+			}
+			renderErr := renderResult(cmd, commandResult{
+				Data:     result,
+				Warnings: warnings,
+				Errors:   validationErrors(result),
+				Human: func(writer io.Writer) error {
+					status := "valid"
+					if !result.Valid {
+						status = "invalid"
+					}
+					if _, err := fmt.Fprintf(writer, "profile config: %s\nstatus: %s\nprofiles: %d\n", store.path, status, len(file.Profiles)); err != nil {
+						return err
+					}
+					for _, check := range result.Checks {
+						if _, err := fmt.Fprintf(writer, "- %s: %s - %s\n", check.Name, check.Status, check.Message); err != nil {
+							return err
+						}
+					}
+					return nil
+				},
+			})
+			if renderErr != nil {
+				return renderErr
+			}
+			if !result.Valid {
+				return renderedError{exitCode: exitUsageOrConfig, message: "profile config validation failed"}
+			}
+			return nil
+		},
 	})
 	return config
 }
@@ -97,21 +144,76 @@ func newProfileCommand() *cobra.Command {
 		Use:   "profile",
 		Short: "Manage local profiles",
 	}
-	profile.AddCommand(&cobra.Command{
+
+	list := &cobra.Command{
 		Use:   "list",
 		Short: "List saved non-secret profile metadata",
-		RunE:  notImplemented("profile list"),
-	})
-	profile.AddCommand(&cobra.Command{
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			store, err := newProfileStore()
+			if err != nil {
+				return err
+			}
+			file, err := store.load()
+			if err != nil {
+				return err
+			}
+			data := profileListDataFromFile(file)
+			return renderResult(cmd, commandResult{
+				Data: data,
+				Human: func(writer io.Writer) error {
+					if len(data.Profiles) == 0 {
+						_, err := fmt.Fprintln(writer, "no profiles configured")
+						return err
+					}
+					for _, item := range data.Profiles {
+						defaultMarker := ""
+						if item.Default {
+							defaultMarker = " default"
+						}
+						if item.ProductionMarker != "" {
+							if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%s%s\n", item.Name, item.Environment, item.ProductionMarker, item.CredentialSource.Type, defaultMarker); err != nil {
+								return err
+							}
+							continue
+						}
+						if _, err := fmt.Fprintf(writer, "%s\t%s\t%s%s\n", item.Name, item.Environment, item.CredentialSource.Type, defaultMarker); err != nil {
+							return err
+						}
+					}
+					return nil
+				},
+			})
+		},
+	}
+	profile.AddCommand(list)
+
+	setupOptions := &profileSetupOptions{}
+	setup := &cobra.Command{
 		Use:   "setup",
 		Short: "Create or update profile metadata",
-		RunE:  notImplemented("profile setup"),
-	})
-	profile.AddCommand(&cobra.Command{
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runProfileSetup(cmd, setupOptions)
+		},
+	}
+	setup.Flags().StringVar(&setupOptions.Name, "name", "", "profile name")
+	setup.Flags().StringVar(&setupOptions.Environment, "environment", "", "environment classification: sandbox or production")
+	setup.Flags().StringVar(&setupOptions.APILoginIDEnv, "api-login-id-env", defaultCredentialLoginEnv, "environment variable containing the API login ID")
+	setup.Flags().StringVar(&setupOptions.TransactionKeyEnv, "transaction-key-env", defaultCredentialTranKeyEnv, "environment variable containing the transaction key")
+	setup.Flags().StringVar(&setupOptions.SecureReference, "secure-local-reference", "", "secure local credential reference")
+	setup.Flags().BoolVar(&setupOptions.Default, "default", false, "make this sandbox profile the default")
+	profile.AddCommand(setup)
+
+	removeOptions := &profileRemoveOptions{}
+	remove := &cobra.Command{
 		Use:   "remove",
 		Short: "Remove local profile metadata",
-		RunE:  notImplemented("profile remove"),
-	})
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runProfileRemove(cmd, removeOptions)
+		},
+	}
+	remove.Flags().StringVar(&removeOptions.Name, "name", "", "profile name to remove")
+	profile.AddCommand(remove)
+
 	return profile
 }
 
@@ -184,14 +286,6 @@ func newSandboxCommand() *cobra.Command {
 	}
 }
 
-func authnetConfigDir() (string, error) {
-	configDir, err := os.UserConfigDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve user config directory: %w", err)
-	}
-	return filepath.Join(configDir, "authnet-cli"), nil
-}
-
 type versionData struct {
 	Version        string `json:"version"`
 	SchemaVersion  string `json:"schema_version"`
@@ -202,6 +296,179 @@ type versionData struct {
 
 type pathsData struct {
 	ConfigDirectory             string `json:"config_directory"`
+	ProfileConfigFile           string `json:"profile_config_file"`
 	SensitiveDataPersistence    string `json:"sensitive_data_persistence"`
 	HasSensitivePersistencePath bool   `json:"has_sensitive_persistence_path"`
+}
+
+type profileSetupOptions struct {
+	Name              string
+	Environment       string
+	APILoginIDEnv     string
+	TransactionKeyEnv string
+	SecureReference   string
+	Default           bool
+}
+
+type profileRemoveOptions struct {
+	Name string
+}
+
+type profileListData struct {
+	DefaultProfile string            `json:"default_profile,omitempty"`
+	Profiles       []profileListItem `json:"profiles"`
+}
+
+type profileListItem struct {
+	Name             string           `json:"name"`
+	Environment      string           `json:"environment"`
+	ProductionMarker string           `json:"production_marker,omitempty"`
+	Default          bool             `json:"default"`
+	CredentialSource credentialSource `json:"credential_source"`
+}
+
+type profileMutationData struct {
+	Name        string `json:"name"`
+	Environment string `json:"environment,omitempty"`
+	ConfigPath  string `json:"config_path"`
+	Default     bool   `json:"default,omitempty"`
+	Removed     bool   `json:"removed,omitempty"`
+}
+
+func runProfileSetup(cmd *cobra.Command, options *profileSetupOptions) error {
+	global := optionsFromCommand(cmd)
+	if global.Automation && (strings.TrimSpace(options.Name) == "" || strings.TrimSpace(options.Environment) == "") {
+		return newUsageError("profile setup requires --name and --environment in automation mode")
+	}
+	if !global.Automation {
+		scanner := bufio.NewScanner(cmd.InOrStdin())
+		if err := promptForMissing(scanner, cmd.ErrOrStderr(), "profile name", &options.Name); err != nil {
+			return err
+		}
+		if err := promptForMissing(scanner, cmd.ErrOrStderr(), "environment", &options.Environment); err != nil {
+			return err
+		}
+	}
+
+	source := credentialSource{
+		Type:              credentialSourceEnv,
+		APILoginIDEnv:     options.APILoginIDEnv,
+		TransactionKeyEnv: options.TransactionKeyEnv,
+	}
+	if strings.TrimSpace(options.SecureReference) != "" {
+		source = credentialSource{
+			Type:      credentialSourceSecureRef,
+			Reference: strings.TrimSpace(options.SecureReference),
+		}
+	}
+	entry := profileEntry{
+		Name:             strings.TrimSpace(options.Name),
+		Environment:      strings.TrimSpace(options.Environment),
+		CredentialSource: source,
+	}
+
+	store, err := newProfileStore()
+	if err != nil {
+		return err
+	}
+	file, err := store.load()
+	if err != nil {
+		return err
+	}
+	file, err = upsertProfile(file, entry, options.Default)
+	if err != nil {
+		return err
+	}
+	if err := store.save(file); err != nil {
+		return err
+	}
+	return renderResult(cmd, commandResult{
+		Data: profileMutationData{
+			Name:        entry.Name,
+			Environment: entry.Environment,
+			ConfigPath:  store.path,
+			Default:     file.DefaultProfile == entry.Name,
+		},
+		Human: func(writer io.Writer) error {
+			defaultText := ""
+			if file.DefaultProfile == entry.Name {
+				defaultText = " default"
+			}
+			_, err := fmt.Fprintf(writer, "profile saved: %s (%s)%s\n", entry.Name, entry.Environment, defaultText)
+			return err
+		},
+	})
+}
+
+func runProfileRemove(cmd *cobra.Command, options *profileRemoveOptions) error {
+	global := optionsFromCommand(cmd)
+	if global.Automation && strings.TrimSpace(options.Name) == "" {
+		return newUsageError("profile remove requires --name in automation mode")
+	}
+	if !global.Automation {
+		scanner := bufio.NewScanner(cmd.InOrStdin())
+		if err := promptForMissing(scanner, cmd.ErrOrStderr(), "profile name", &options.Name); err != nil {
+			return err
+		}
+	}
+	name := strings.TrimSpace(options.Name)
+	if name == "" {
+		return newUsageError("profile name is required")
+	}
+	store, err := newProfileStore()
+	if err != nil {
+		return err
+	}
+	file, err := store.load()
+	if err != nil {
+		return err
+	}
+	file, removed := removeProfile(file, name)
+	if !removed {
+		return newUsageError("profile %q does not exist", name)
+	}
+	if err := store.save(file); err != nil {
+		return err
+	}
+	return renderResult(cmd, commandResult{
+		Data: profileMutationData{
+			Name:       name,
+			ConfigPath: store.path,
+			Removed:    true,
+		},
+		Human: func(writer io.Writer) error {
+			_, err := fmt.Fprintf(writer, "profile removed: %s\n", name)
+			return err
+		},
+	})
+}
+
+func profileListDataFromFile(file profileFile) profileListData {
+	data := profileListData{
+		DefaultProfile: file.DefaultProfile,
+		Profiles:       []profileListItem{},
+	}
+	for _, profile := range file.Profiles {
+		item := profileListItem{
+			Name:             profile.Name,
+			Environment:      profile.Environment,
+			Default:          profile.Name == file.DefaultProfile,
+			CredentialSource: profile.CredentialSource,
+		}
+		if profile.Environment == environmentProduction {
+			item.ProductionMarker = productionMarker
+		}
+		data.Profiles = append(data.Profiles, item)
+	}
+	return data
+}
+
+func validationErrors(result validationResult) []structuredError {
+	if result.Valid {
+		return nil
+	}
+	return []structuredError{{
+		Code:    "profile_config_invalid",
+		Message: "profile config validation failed",
+	}}
 }
