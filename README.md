@@ -1,0 +1,68 @@
+# authnet-cli
+
+`authnet-cli` is an Authorize.Net operations CLI. The executable is `authnet`.
+
+The project is in a pre-release `0.1.0` read-first alpha. The current goal is a safe operator-first command line tool for inspecting Authorize.Net state across sandbox and production profiles, with stable JSON output for automation and agents.
+
+This is not an SDK wrapper, raw API tunnel, MCP server, or compliance product.
+
+## Current Boundary
+
+The read-first alpha allows explicit production reads and excludes production writes. Sandbox helper commands may contact the real Authorize.Net sandbox gateway for known test-card scenarios, but production mutation commands are not in v1.
+
+Output is redacted by default. The CLI must not write sensitive payment data or customer PII through CLI-controlled persistence.
+
+See the full [project specification](docs/project-spec.md) and [safety model](docs/safety-model.md) before adding new command surfaces.
+
+## Installation State
+
+There is not yet a published package or release artifact. Build from the repository while the alpha is under active development:
+
+```sh
+make build
+./bin/authnet version
+```
+
+GitHub Releases are planned as the canonical release source for v1, with checksums and an initial Homebrew tap path. Until then, local builds are the supported install path.
+
+## V1 Command Scope
+
+Canonical v1 command surfaces:
+
+```text
+authnet --version
+authnet version
+authnet paths
+authnet config validate
+authnet auth test
+authnet profile list
+authnet profile setup
+authnet profile remove
+authnet transaction get
+authnet transaction list
+authnet transaction unsettled list
+authnet customer-profile get
+authnet customer-profile list
+authnet response-code explain
+authnet sandbox ...
+authnet completion ...
+```
+
+Production reads must use an explicit production profile. A default profile may exist only for sandbox-classified profiles.
+
+## Local Development
+
+Install the pinned linter and Git hooks:
+
+```sh
+make golangci-lint-install
+make install-git-hooks
+```
+
+Run the full local verification set:
+
+```sh
+GOTMPDIR="$PWD/.cache/go-tmp" make verify
+```
+
+Contributor expectations are documented in [CONTRIBUTING.md](CONTRIBUTING.md). Agent and automation usage is documented in [docs/agent-usage.md](docs/agent-usage.md). Response-code reference maintenance is documented in [docs/response-code-reference.md](docs/response-code-reference.md).

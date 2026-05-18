@@ -6,7 +6,7 @@ GOCACHE ?= $(CURDIR)/.cache/go-build
 GOMODCACHE ?= $(CURDIR)/.cache/go-mod
 GOLANGCI_LINT_CACHE ?= $(CURDIR)/.cache/golangci-lint
 
-.PHONY: fmt test vet build verify golangci-lint-install golangci-lint-full install-git-hooks
+.PHONY: fmt test vet build docs-check verify golangci-lint-install golangci-lint-full install-git-hooks
 
 fmt:
 	gofmt -w cmd internal
@@ -20,7 +20,10 @@ vet:
 build:
 	GOCACHE="$(GOCACHE)" GOMODCACHE="$(GOMODCACHE)" go build -o "$(AUTHNET_BIN)" ./cmd/authnet
 
-verify: fmt test vet build golangci-lint-full
+docs-check:
+	./scripts/check-docs.sh
+
+verify: fmt test vet build docs-check golangci-lint-full
 
 golangci-lint-install:
 	./scripts/install-golangci-lint.sh "$(GOLANGCI_LINT_VERSION)" "$(LOCAL_BIN)"
