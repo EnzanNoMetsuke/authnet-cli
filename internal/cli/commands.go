@@ -253,15 +253,22 @@ func newCustomerProfileCommand() *cobra.Command {
 		Use:   "customer-profile",
 		Short: "Inspect Authorize.Net customer profiles",
 	}
-	customerProfile.AddCommand(&cobra.Command{
-		Use:   "get",
+	getOptions := &customerProfileGetOptions{}
+	get := &cobra.Command{
+		Use:   "get CUSTOMER_PROFILE_ID",
 		Short: "Inspect one customer profile",
-		RunE:  notImplemented("customer-profile get"),
-	})
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runCustomerProfileGet(cmd, args, getOptions)
+		},
+	}
+	get.Flags().BoolVar(&getOptions.IncludePaymentProfiles, "include-payment-profiles", false, "include redacted customer payment profile summaries")
+	get.Flags().BoolVar(&getOptions.IncludeShippingAddresses, "include-shipping-addresses", false, "include redacted customer shipping address summaries")
+	customerProfile.AddCommand(get)
 	customerProfile.AddCommand(&cobra.Command{
 		Use:   "list",
 		Short: "List customer profile metadata",
-		RunE:  notImplemented("customer-profile list"),
+		RunE:  runCustomerProfileList,
 	})
 	return customerProfile
 }
@@ -313,6 +320,11 @@ type profileSetupOptions struct {
 
 type profileRemoveOptions struct {
 	Name string
+}
+
+type customerProfileGetOptions struct {
+	IncludePaymentProfiles   bool
+	IncludeShippingAddresses bool
 }
 
 type profileListData struct {
@@ -383,6 +395,41 @@ type gatewayDetailsSummary struct {
 	AVSResponse      string `json:"avs_response,omitempty"`
 	CardCodeResponse string `json:"card_code_response,omitempty"`
 	CAVVResponse     string `json:"cavv_response,omitempty"`
+}
+
+type customerProfileLookupData struct {
+	CustomerProfileID         string                           `json:"customer_profile_id"`
+	ProfileName               string                           `json:"profile_name"`
+	EnvironmentClassification string                           `json:"environment_classification"`
+	ProductionMarker          string                           `json:"production_marker,omitempty"`
+	MerchantCustomerID        string                           `json:"merchant_customer_id,omitempty"`
+	PaymentProfileCount       int                              `json:"payment_profile_count"`
+	ShippingAddressCount      int                              `json:"shipping_address_count"`
+	PaymentProfiles           []customerPaymentProfileSummary  `json:"payment_profiles,omitempty"`
+	ShippingAddresses         []customerShippingAddressSummary `json:"shipping_addresses,omitempty"`
+	GatewayMessageCode        string                           `json:"gateway_message_code,omitempty"`
+	Message                   string                           `json:"message,omitempty"`
+}
+
+type customerPaymentProfileSummary struct {
+	CustomerPaymentProfileID string `json:"customer_payment_profile_id"`
+	AccountType              string `json:"account_type,omitempty"`
+	AccountNumber            string `json:"account_number,omitempty"`
+	CardType                 string `json:"card_type,omitempty"`
+}
+
+type customerShippingAddressSummary struct {
+	CustomerAddressID string `json:"customer_address_id"`
+}
+
+type customerProfileListData struct {
+	ProfileName               string   `json:"profile_name"`
+	EnvironmentClassification string   `json:"environment_classification"`
+	ProductionMarker          string   `json:"production_marker,omitempty"`
+	Count                     int      `json:"count"`
+	CustomerProfileIDs        []string `json:"customer_profile_ids"`
+	GatewayMessageCode        string   `json:"gateway_message_code,omitempty"`
+	Message                   string   `json:"message,omitempty"`
 }
 
 func runAuthTest(cmd *cobra.Command, _ []string) error {
@@ -512,20 +559,183 @@ func runTransactionGet(cmd *cobra.Command, args []string) error {
 	})
 }
 
+func runCustomerProfileGet(cmd *cobra.Command, args []string, getOptions *customerProfileGetOptions) error {
+	customerProfileID := strings.TrimSpace(args[0])
+	if customerProfileID == "" {
+		return newUsageError("customer-profile get requires a customer profile identifier")
+	}
+
+	options := optionsFromCommand(cmd)
+	profile, err := loadSelectedProfileWithCredentials(options, "customer-profile get")
+	if err != nil {
+		return err
+	}
+	client, err := newGatewayClient(profile.Entry.Environment)
+	if err != nil {
+		return err
+	}
+	response, err := client.getCustomerProfile(cmd.Context(), profile.Credentials, customerProfileID)
+	if err != nil {
+		return err
+	}
+
+	message := firstGatewayMessage(response.Messages.Message)
+	data := customerProfileLookupData{
+		CustomerProfileID:         firstNonEmpty(response.Profile.CustomerProfileID.String(), customerProfileID),
+		ProfileName:               profile.Entry.Name,
+		EnvironmentClassification: profile.Entry.Environment,
+		ProductionMarker:          productionMarkerForEnvironment(profile.Entry.Environment),
+		GatewayMessageCode:        message.Code,
+		Message:                   message.Text,
+	}
+	if !strings.EqualFold(response.Messages.ResultCode, "Ok") {
+		return renderCustomerProfileFailure(cmd, "customer profile lookup", response.Messages.ResultCode, data.CustomerProfileID, data.GatewayMessageCode, data.Message)
+	}
+
+	data = data.withCustomerProfile(response.Profile, getOptions)
+	data = sanitizeForOutput(data).(customerProfileLookupData)
+	return renderResult(cmd, commandResult{
+		Data: data,
+		Human: func(writer io.Writer) error {
+			if _, writeErr := fmt.Fprintf(writer, "customer profile: %s\nmerchant customer: %s\nenvironment: %s%s\npayment profiles: %d\nshipping addresses: %d\n",
+				data.CustomerProfileID,
+				firstNonEmpty(data.MerchantCustomerID, "(none)"),
+				data.EnvironmentClassification,
+				productionMarkerSuffix(data.ProductionMarker),
+				data.PaymentProfileCount,
+				data.ShippingAddressCount,
+			); writeErr != nil {
+				return writeErr
+			}
+			for _, item := range data.PaymentProfiles {
+				if _, writeErr := fmt.Fprintf(writer, "payment profile: %s %s %s\n", item.CustomerPaymentProfileID, item.AccountType, item.AccountNumber); writeErr != nil {
+					return writeErr
+				}
+			}
+			for _, item := range data.ShippingAddresses {
+				if _, writeErr := fmt.Fprintf(writer, "shipping address: %s\n", item.CustomerAddressID); writeErr != nil {
+					return writeErr
+				}
+			}
+			return nil
+		},
+	})
+}
+
+func runCustomerProfileList(cmd *cobra.Command, _ []string) error {
+	options := optionsFromCommand(cmd)
+	profile, err := loadSelectedProfileWithCredentials(options, "customer-profile list")
+	if err != nil {
+		return err
+	}
+	client, err := newGatewayClient(profile.Entry.Environment)
+	if err != nil {
+		return err
+	}
+	response, err := client.getCustomerProfileIDs(cmd.Context(), profile.Credentials)
+	if err != nil {
+		return err
+	}
+
+	message := firstGatewayMessage(response.Messages.Message)
+	data := customerProfileListData{
+		ProfileName:               profile.Entry.Name,
+		EnvironmentClassification: profile.Entry.Environment,
+		ProductionMarker:          productionMarkerForEnvironment(profile.Entry.Environment),
+		CustomerProfileIDs:        gatewayStrings(response.IDs),
+		GatewayMessageCode:        message.Code,
+		Message:                   message.Text,
+	}
+	data.Count = len(data.CustomerProfileIDs)
+	if !strings.EqualFold(response.Messages.ResultCode, "Ok") {
+		return renderCustomerProfileListFailure(cmd, response.Messages.ResultCode, data)
+	}
+
+	data = sanitizeForOutput(data).(customerProfileListData)
+	return renderResult(cmd, commandResult{
+		Data: data,
+		Human: func(writer io.Writer) error {
+			if _, writeErr := fmt.Fprintf(writer, "environment: %s%s\ncustomer profiles: %d\n",
+				data.EnvironmentClassification,
+				productionMarkerSuffix(data.ProductionMarker),
+				data.Count,
+			); writeErr != nil {
+				return writeErr
+			}
+			for _, customerProfileID := range data.CustomerProfileIDs {
+				if _, writeErr := fmt.Fprintf(writer, "%s\n", customerProfileID); writeErr != nil {
+					return writeErr
+				}
+			}
+			return nil
+		},
+	})
+}
+
+func renderCustomerProfileListFailure(cmd *cobra.Command, resultCode string, data customerProfileListData) error {
+	if data.Message == "" {
+		data.Message = "customer profile list failed"
+	}
+	data = sanitizeForOutput(data).(customerProfileListData)
+	errorCode, exitCode := gatewayFailureMapping(data.GatewayMessageCode, data.Message, "customer_profile_not_found")
+	renderErr := renderResult(cmd, commandResult{
+		Data: data,
+		Errors: []structuredError{{
+			Code:    errorCode,
+			Message: data.Message,
+		}},
+		Human: func(writer io.Writer) error {
+			_, writeErr := fmt.Fprintf(writer, "customer profile list: failed\nresult: %s\nmessage: %s\n",
+				resultCode,
+				data.Message,
+			)
+			return writeErr
+		},
+	})
+	if renderErr != nil {
+		return renderErr
+	}
+	return renderedError{exitCode: exitCode, message: data.Message}
+}
+
+func renderCustomerProfileFailure(cmd *cobra.Command, operation string, resultCode string, customerProfileID string, gatewayMessageCode string, message string) error {
+	if message == "" {
+		message = operation + " failed"
+	}
+	data := customerProfileLookupData{
+		CustomerProfileID:  customerProfileID,
+		GatewayMessageCode: gatewayMessageCode,
+		Message:            message,
+	}
+	data = sanitizeForOutput(data).(customerProfileLookupData)
+	errorCode, exitCode := gatewayFailureMapping(gatewayMessageCode, message, "customer_profile_not_found")
+	renderErr := renderResult(cmd, commandResult{
+		Data: data,
+		Errors: []structuredError{{
+			Code:    errorCode,
+			Message: data.Message,
+		}},
+		Human: func(writer io.Writer) error {
+			_, writeErr := fmt.Fprintf(writer, "customer profile: %s\nlookup: failed\nresult: %s\nmessage: %s\n",
+				data.CustomerProfileID,
+				resultCode,
+				data.Message,
+			)
+			return writeErr
+		},
+	})
+	if renderErr != nil {
+		return renderErr
+	}
+	return renderedError{exitCode: exitCode, message: data.Message}
+}
+
 func renderTransactionLookupFailure(cmd *cobra.Command, resultCode string, data transactionLookupData) error {
 	if data.Message == "" {
 		data.Message = "transaction lookup failed"
 	}
 	data = sanitizeForOutput(data).(transactionLookupData)
-	errorCode := "gateway_failure"
-	exitCode := exitGatewayFailure
-	if data.GatewayMessageCode == "E00040" || strings.Contains(strings.ToLower(data.Message), "not found") {
-		errorCode = "transaction_not_found"
-		exitCode = exitNotFound
-	} else if data.GatewayMessageCode == "E00007" || data.GatewayMessageCode == "E00008" {
-		errorCode = "authentication_failed"
-		exitCode = exitAuthFailure
-	}
+	errorCode, exitCode := gatewayFailureMapping(data.GatewayMessageCode, data.Message, "transaction_not_found")
 	renderErr := renderResult(cmd, commandResult{
 		Data: data,
 		Errors: []structuredError{{
@@ -545,6 +755,16 @@ func renderTransactionLookupFailure(cmd *cobra.Command, resultCode string, data 
 		return renderErr
 	}
 	return renderedError{exitCode: exitCode, message: data.Message}
+}
+
+func gatewayFailureMapping(gatewayMessageCode string, message string, notFoundCode string) (string, ExitCode) {
+	if gatewayMessageCode == "E00040" || strings.Contains(strings.ToLower(message), "not found") || strings.Contains(strings.ToLower(message), "cannot be found") {
+		return notFoundCode, exitNotFound
+	}
+	if gatewayMessageCode == "E00007" || gatewayMessageCode == "E00008" {
+		return "authentication_failed", exitAuthFailure
+	}
+	return "gateway_failure", exitGatewayFailure
 }
 
 func (data transactionLookupData) withTransaction(transaction gatewayTransaction) transactionLookupData {
@@ -576,11 +796,60 @@ func (data transactionLookupData) withTransaction(transaction gatewayTransaction
 	return data
 }
 
+func (data customerProfileLookupData) withCustomerProfile(profile gatewayCustomerProfile, options *customerProfileGetOptions) customerProfileLookupData {
+	data.CustomerProfileID = firstNonEmpty(profile.CustomerProfileID.String(), data.CustomerProfileID)
+	data.MerchantCustomerID = profile.MerchantCustomerID.String()
+	data.PaymentProfileCount = len(profile.PaymentProfiles)
+	data.ShippingAddressCount = len(profile.ShipToList)
+	if options.IncludePaymentProfiles {
+		for _, paymentProfile := range profile.PaymentProfiles {
+			data.PaymentProfiles = append(data.PaymentProfiles, customerPaymentProfileSummary{
+				CustomerPaymentProfileID: paymentProfile.CustomerPaymentProfileID.String(),
+				AccountType:              firstNonEmpty(paymentProfile.Payment.CreditCard.CardType.String()),
+				AccountNumber:            paymentProfile.Payment.CreditCard.CardNumber.String(),
+				CardType:                 paymentProfile.Payment.CreditCard.CardType.String(),
+			})
+		}
+	}
+	if options.IncludeShippingAddresses {
+		for _, address := range profile.ShipToList {
+			data.ShippingAddresses = append(data.ShippingAddresses, customerShippingAddressSummary{
+				CustomerAddressID: address.CustomerAddressID.String(),
+			})
+		}
+	}
+	return data
+}
+
 func firstGatewayMessage(messages []gatewayMessage) gatewayMessage {
 	if len(messages) == 0 {
 		return gatewayMessage{}
 	}
 	return messages[0]
+}
+
+func gatewayStrings(values []gatewayString) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if text := strings.TrimSpace(value.String()); text != "" {
+			result = append(result, text)
+		}
+	}
+	return result
+}
+
+func productionMarkerForEnvironment(environment string) string {
+	if environment == environmentProduction {
+		return productionMarker
+	}
+	return ""
+}
+
+func productionMarkerSuffix(marker string) string {
+	if marker == "" {
+		return ""
+	}
+	return " " + marker
 }
 
 func firstNonEmpty(values ...string) string {

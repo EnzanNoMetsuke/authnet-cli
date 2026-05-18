@@ -50,6 +50,23 @@ type getTransactionDetailsRequest struct {
 	TransactionID          string                 `json:"transId"`
 }
 
+type getCustomerProfileRequestEnvelope struct {
+	Request getCustomerProfileRequest `json:"getCustomerProfileRequest"`
+}
+
+type getCustomerProfileRequest struct {
+	MerchantAuthentication merchantAuthentication `json:"merchantAuthentication"`
+	CustomerProfileID      string                 `json:"customerProfileId"`
+}
+
+type getCustomerProfileIDsRequestEnvelope struct {
+	Request getCustomerProfileIDsRequest `json:"getCustomerProfileIdsRequest"`
+}
+
+type getCustomerProfileIDsRequest struct {
+	MerchantAuthentication merchantAuthentication `json:"merchantAuthentication"`
+}
+
 type authenticateTestResponseEnvelope struct {
 	Messages gatewayMessages `json:"messages"`
 }
@@ -57,6 +74,16 @@ type authenticateTestResponseEnvelope struct {
 type getTransactionDetailsResponseEnvelope struct {
 	Messages    gatewayMessages    `json:"messages"`
 	Transaction gatewayTransaction `json:"transaction"`
+}
+
+type getCustomerProfileResponseEnvelope struct {
+	Messages gatewayMessages        `json:"messages"`
+	Profile  gatewayCustomerProfile `json:"profile"`
+}
+
+type getCustomerProfileIDsResponseEnvelope struct {
+	Messages gatewayMessages `json:"messages"`
+	IDs      []gatewayString `json:"ids"`
 }
 
 type gatewayMessages struct {
@@ -136,6 +163,22 @@ type gatewayProfile struct {
 	CustomerPaymentProfileID gatewayString `json:"customerPaymentProfileId"`
 }
 
+type gatewayCustomerProfile struct {
+	CustomerProfileID  gatewayString                   `json:"customerProfileId"`
+	MerchantCustomerID gatewayString                   `json:"merchantCustomerId"`
+	PaymentProfiles    []gatewayCustomerPaymentProfile `json:"paymentProfiles"`
+	ShipToList         []gatewayCustomerAddress        `json:"shipToList"`
+}
+
+type gatewayCustomerPaymentProfile struct {
+	CustomerPaymentProfileID gatewayString  `json:"customerPaymentProfileId"`
+	Payment                  gatewayPayment `json:"payment"`
+}
+
+type gatewayCustomerAddress struct {
+	CustomerAddressID gatewayString `json:"customerAddressId"`
+}
+
 type selectedProfile struct {
 	Entry       profileEntry
 	Credentials authCredentials
@@ -209,6 +252,57 @@ func (client gatewayClient) getTransactionDetails(ctx context.Context, credentia
 			exitCode: exitGatewayFailure,
 			code:     "gateway_response_invalid",
 			message:  "Authorize.Net returned an invalid transaction lookup response",
+		}
+	}
+	return parsed, nil
+}
+
+func (client gatewayClient) getCustomerProfile(ctx context.Context, credentials authCredentials, customerProfileID string) (getCustomerProfileResponseEnvelope, error) {
+	requestBody := getCustomerProfileRequestEnvelope{
+		Request: getCustomerProfileRequest{
+			MerchantAuthentication: merchantAuthentication{
+				Name:           credentials.APILoginID,
+				TransactionKey: credentials.TransactionKey,
+			},
+			CustomerProfileID: customerProfileID,
+		},
+	}
+	responseBody, err := client.post(ctx, requestBody, "customer profile lookup")
+	if err != nil {
+		return getCustomerProfileResponseEnvelope{}, err
+	}
+
+	var parsed getCustomerProfileResponseEnvelope
+	if err := decodeGatewayJSON(responseBody, &parsed); err != nil {
+		return getCustomerProfileResponseEnvelope{}, cliError{
+			exitCode: exitGatewayFailure,
+			code:     "gateway_response_invalid",
+			message:  "Authorize.Net returned an invalid customer profile lookup response",
+		}
+	}
+	return parsed, nil
+}
+
+func (client gatewayClient) getCustomerProfileIDs(ctx context.Context, credentials authCredentials) (getCustomerProfileIDsResponseEnvelope, error) {
+	requestBody := getCustomerProfileIDsRequestEnvelope{
+		Request: getCustomerProfileIDsRequest{
+			MerchantAuthentication: merchantAuthentication{
+				Name:           credentials.APILoginID,
+				TransactionKey: credentials.TransactionKey,
+			},
+		},
+	}
+	responseBody, err := client.post(ctx, requestBody, "customer profile list")
+	if err != nil {
+		return getCustomerProfileIDsResponseEnvelope{}, err
+	}
+
+	var parsed getCustomerProfileIDsResponseEnvelope
+	if err := decodeGatewayJSON(responseBody, &parsed); err != nil {
+		return getCustomerProfileIDsResponseEnvelope{}, cliError{
+			exitCode: exitGatewayFailure,
+			code:     "gateway_response_invalid",
+			message:  "Authorize.Net returned an invalid customer profile list response",
 		}
 	}
 	return parsed, nil

@@ -534,6 +534,210 @@ func TestTransactionGetHumanOutput(t *testing.T) {
 	assertContains(t, stdout, "settlement: settledSuccessfully")
 }
 
+func TestCustomerProfileGetDefaultsToMetadataOnly(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newCustomerProfileGetTestServer(t, http.StatusOK, "1001", `{
+		"messages": {
+			"resultCode": "Ok",
+			"message": [{"code": "I00001", "text": "Successful."}]
+		},
+		"profile": {
+			"customerProfileId": 1001,
+			"merchantCustomerId": "merchant-1001",
+			"description": "Customer name should not render",
+			"email": "customer@example.test",
+			"paymentProfiles": [{
+				"customerPaymentProfileId": 2002,
+				"payment": {"creditCard": {"cardNumber": "XXXX1111", "expirationDate": "XXXX", "cardType": "Visa"}},
+				"billTo": {"firstName": "Customer", "email": "billing@example.test"}
+			}],
+			"shipToList": [{
+				"customerAddressId": 3003,
+				"firstName": "Ship",
+				"address": "123 Main Street"
+			}]
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "customer-profile", "get", "1001")
+	if err != nil {
+		t.Fatalf("expected customer-profile get to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"command": "authnet customer-profile get"`)
+	assertContains(t, stdout, `"profile_name": "sandbox-main"`)
+	assertContains(t, stdout, `"environment_classification": "sandbox"`)
+	assertContains(t, stdout, `"customer_profile_id": "1001"`)
+	assertContains(t, stdout, `"merchant_customer_id": "merchant-1001"`)
+	assertContains(t, stdout, `"payment_profile_count": 1`)
+	assertContains(t, stdout, `"shipping_address_count": 1`)
+	assertNotContains(t, stdout, "customer@example.test")
+	assertNotContains(t, stdout, "billing@example.test")
+	assertNotContains(t, stdout, "Customer name should not render")
+	assertNotContains(t, stdout, "XXXX1111")
+	assertNotContains(t, stdout, "123 Main Street")
+	assertNotContains(t, stdout, "secret-login")
+	assertNotContains(t, stdout, "secret-key")
+}
+
+func TestCustomerProfileGetIncludesExplicitNestedRedactedSummaries(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newCustomerProfileGetTestServer(t, http.StatusOK, "1001", `{
+		"messages": {
+			"resultCode": "Ok",
+			"message": [{"code": "I00001", "text": "Successful."}]
+		},
+		"profile": {
+			"customerProfileId": "1001",
+			"merchantCustomerId": "merchant-1001",
+			"paymentProfiles": [{
+				"customerPaymentProfileId": 2002,
+				"payment": {"creditCard": {"cardNumber": "XXXX1111", "cardType": "Visa"}}
+			}],
+			"shipToList": [{"customerAddressId": 3003, "firstName": "Ship"}]
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "customer-profile", "get", "1001", "--include-payment-profiles", "--include-shipping-addresses")
+	if err != nil {
+		t.Fatalf("expected customer-profile get to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"customer_payment_profile_id": "2002"`)
+	assertContains(t, stdout, `"account_number": "XXXX1111"`)
+	assertContains(t, stdout, `"customer_address_id": "3003"`)
+	assertNotContains(t, stdout, "Ship")
+}
+
+func TestCustomerProfileListSucceedsWithMockGateway(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newCustomerProfileListTestServer(t, http.StatusOK, `{
+		"messages": {
+			"resultCode": "Ok",
+			"message": [{"code": "I00001", "text": "Successful."}]
+		},
+		"ids": [1001, "1002"]
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "customer-profile", "list")
+	if err != nil {
+		t.Fatalf("expected customer-profile list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"command": "authnet customer-profile list"`)
+	assertContains(t, stdout, `"count": 2`)
+	assertContains(t, stdout, `"customer_profile_ids": [`)
+	assertContains(t, stdout, `"1001"`)
+	assertContains(t, stdout, `"1002"`)
+}
+
+func TestCustomerProfileGetUsesProductionEndpointForExplicitProductionProfile(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	sandboxServer := newCustomerProfileGetTestServer(t, http.StatusInternalServerError, "1001", `{"messages":{"resultCode":"Error","message":[{"code":"E99999","text":"wrong endpoint"}]}}`)
+	productionServer := newCustomerProfileGetTestServer(t, http.StatusOK, "1001", `{
+		"messages": {
+			"resultCode": "Ok",
+			"message": [{"code": "I00001", "text": "Successful."}]
+		},
+		"profile": {"customerProfileId": "1001", "merchantCustomerId": "merchant-1001"}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, sandboxServer.URL)
+	withGatewayTestEndpoint(t, environmentProduction, productionServer.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "prod-main", "--environment", "production")
+	if err != nil {
+		t.Fatalf("expected production profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "--profile", "prod-main", "customer-profile", "get", "1001")
+	if err != nil {
+		t.Fatalf("expected customer-profile get to use production endpoint: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"profile_name": "prod-main"`)
+	assertContains(t, stdout, `"environment_classification": "production"`)
+	assertContains(t, stdout, `"production_marker": "PRODUCTION"`)
+}
+
+func TestCustomerProfileGetMapsNotFound(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newCustomerProfileGetTestServer(t, http.StatusOK, "missing-profile", `{
+		"messages": {
+			"resultCode": "Error",
+			"message": [{"code": "E00040", "text": "The record cannot be found."}]
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("--json", "customer-profile", "get", "missing-profile")
+	if err == nil {
+		t.Fatal("expected missing customer profile to fail")
+	}
+	if code != exitNotFound {
+		t.Fatalf("expected not found exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "customer_profile_not_found"`)
+	assertContains(t, stdout, `"gateway_message_code": "E00040"`)
+}
+
+func TestCustomerProfileGetHumanOutput(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newCustomerProfileGetTestServer(t, http.StatusOK, "1001", `{
+		"messages": {
+			"resultCode": "Ok",
+			"message": [{"code": "I00001", "text": "Successful."}]
+		},
+		"profile": {
+			"customerProfileId": "1001",
+			"merchantCustomerId": "merchant-1001",
+			"paymentProfiles": [{"customerPaymentProfileId": "2002"}],
+			"shipToList": [{"customerAddressId": "3003"}]
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("customer-profile", "get", "1001")
+	if err != nil {
+		t.Fatalf("expected customer-profile get to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, "customer profile: 1001")
+	assertContains(t, stdout, "merchant customer: merchant-1001")
+	assertContains(t, stdout, "payment profiles: 1")
+	assertContains(t, stdout, "shipping addresses: 1")
+}
+
 func TestExplicitColorCanApplyToHumanWarningsAndJSON(t *testing.T) {
 	_, stderr, err := executeCommand("--color=always", "paths")
 	if err != nil {
@@ -816,6 +1020,59 @@ func newTransactionTestServer(t *testing.T, status int, transactionID string, re
 		}
 		if !strings.Contains(text, `"transId":"`+transactionID+`"`) {
 			t.Errorf("expected transaction ID %q in body, got %s", transactionID, text)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(status)
+		_, _ = writer.Write([]byte(responseBody))
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func newCustomerProfileGetTestServer(t *testing.T, status int, customerProfileID string, responseBody string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			t.Errorf("expected POST request, got %s", request.Method)
+		}
+		if got := request.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("expected JSON content type, got %q", got)
+		}
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		text := string(body)
+		if !strings.Contains(text, `"getCustomerProfileRequest"`) {
+			t.Errorf("expected getCustomerProfileRequest body, got %s", text)
+		}
+		if !strings.Contains(text, `"customerProfileId":"`+customerProfileID+`"`) {
+			t.Errorf("expected customer profile ID %q in body, got %s", customerProfileID, text)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(status)
+		_, _ = writer.Write([]byte(responseBody))
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func newCustomerProfileListTestServer(t *testing.T, status int, responseBody string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			t.Errorf("expected POST request, got %s", request.Method)
+		}
+		if got := request.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("expected JSON content type, got %q", got)
+		}
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		text := string(body)
+		if !strings.Contains(text, `"getCustomerProfileIdsRequest"`) {
+			t.Errorf("expected getCustomerProfileIdsRequest body, got %s", text)
 		}
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(status)
