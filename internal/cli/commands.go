@@ -307,12 +307,93 @@ func newResponseCodeCommand() *cobra.Command {
 		Use:   "response-code",
 		Short: "Explain Authorize.Net response codes",
 	}
-	responseCode.AddCommand(&cobra.Command{
-		Use:   "explain",
+	explainOptions := &responseCodeExplainOptions{}
+	explain := &cobra.Command{
+		Use:   "explain CODE",
 		Short: "Explain a gateway or API response code",
-		RunE:  notImplemented("response-code explain"),
-	})
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runResponseCodeExplain(cmd, args, explainOptions)
+		},
+	}
+	explain.Flags().StringVar(&explainOptions.Family, "family", "", "code family: api_message, validation, transaction_response, avs, or cvv")
+	responseCode.AddCommand(explain)
 	return responseCode
+}
+
+func runResponseCodeExplain(cmd *cobra.Command, args []string, options *responseCodeExplainOptions) error {
+	family, err := normalizeResponseCodeFamily(options.Family)
+	if err != nil {
+		return err
+	}
+	data := explainResponseCode(args[0], family)
+	result := commandResult{
+		Data: data,
+		Human: func(writer io.Writer) error {
+			if len(data.Matches) == 0 {
+				_, err := fmt.Fprintf(writer, "response code %s: no local explanation found\nreference: %s reviewed %s\n", data.QueryCode, data.Reference.Version, data.Reference.Reviewed)
+				return err
+			}
+			if len(data.Matches) > 1 {
+				if _, err := fmt.Fprintln(writer, ambiguousResponseCodeMessage(data)); err != nil {
+					return err
+				}
+				for _, match := range data.Matches {
+					if _, err := fmt.Fprintf(writer, "- %s: %s\n", match.Family, match.Title); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			match := data.Matches[0]
+			if _, err := fmt.Fprintf(writer, "code: %s\nfamily: %s\nmeaning: %s\n", match.Code, match.Family, match.Meaning); err != nil {
+				return err
+			}
+			if len(match.Causes) > 0 {
+				if _, err := fmt.Fprintln(writer, "likely causes:"); err != nil {
+					return err
+				}
+				for _, cause := range match.Causes {
+					if _, err := fmt.Fprintf(writer, "- %s\n", cause); err != nil {
+						return err
+					}
+				}
+			}
+			if len(match.NextSteps) > 0 {
+				if _, err := fmt.Fprintln(writer, "recommended next steps:"); err != nil {
+					return err
+				}
+				for _, step := range match.NextSteps {
+					if _, err := fmt.Fprintf(writer, "- %s\n", step); err != nil {
+						return err
+					}
+				}
+			}
+			_, err := fmt.Fprintf(writer, "reference: %s reviewed %s\n", data.Reference.Version, data.Reference.Reviewed)
+			return err
+		},
+	}
+	if len(data.Matches) == 0 {
+		result.Errors = []structuredError{{
+			Code:    "response_code_not_found",
+			Message: fmt.Sprintf("response code %s was not found in the local curated reference", data.QueryCode),
+		}}
+		if err := renderResult(cmd, result); err != nil {
+			return err
+		}
+		return renderedError{exitCode: exitNotFound, message: result.Errors[0].Message}
+	}
+	if len(data.Matches) > 1 && family == "" {
+		result.Errors = []structuredError{{
+			Code:    "ambiguous_response_code",
+			Message: ambiguousResponseCodeMessage(data),
+		}}
+		if err := renderResult(cmd, result); err != nil {
+			return err
+		}
+		return renderedError{exitCode: exitUsageOrConfig, message: result.Errors[0].Message}
+	}
+	return renderResult(cmd, result)
 }
 
 func newSandboxCommand() *cobra.Command {

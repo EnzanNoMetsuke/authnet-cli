@@ -187,7 +187,7 @@ func TestJSONFailuresAreStructuredOnStdout(t *testing.T) {
 }
 
 func TestNotImplementedUsesExitTaxonomy(t *testing.T) {
-	stdout, stderr, code, err := executeCommandWithExit("response-code", "explain")
+	stdout, stderr, code, err := executeCommandWithExit("sandbox")
 	if err != nil {
 		t.Fatalf("expected human scaffold command to be shell-safe: %v", err)
 	}
@@ -197,13 +197,13 @@ func TestNotImplementedUsesExitTaxonomy(t *testing.T) {
 	if stdout != "" {
 		t.Fatalf("expected non-JSON failure stdout to stay empty, got %q", stdout)
 	}
-	assertContains(t, stderr, "response-code explain is not implemented in this scaffold")
+	assertContains(t, stderr, "sandbox is not implemented in this scaffold")
 }
 
 func TestHumanFailuresAreShellSafe(t *testing.T) {
 	cases := [][]string{
 		{"--color=purple", "version"},
-		{"response-code", "explain"},
+		{"sandbox"},
 		{"profile", "remove", "--name", "missing"},
 		{"transaction", "list", "--limit", "101"},
 	}
@@ -219,6 +219,116 @@ func TestHumanFailuresAreShellSafe(t *testing.T) {
 			t.Fatalf("expected %v to render an error or report", args)
 		}
 	}
+}
+
+func TestResponseCodeExplainHumanOutput(t *testing.T) {
+	stdout, stderr, err := executeCommand("response-code", "explain", "I00001")
+	if err != nil {
+		t.Fatalf("expected response-code explain to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, "code: I00001")
+	assertContains(t, stdout, "family: api_message")
+	assertContains(t, stdout, "meaning: The request was processed successfully.")
+	assertContains(t, stdout, "likely causes:")
+	assertContains(t, stdout, "recommended next steps:")
+	assertContains(t, stdout, "reference: 2026-05-18 reviewed 2026-05-18")
+}
+
+func TestResponseCodeExplainJSONGoldenOutput(t *testing.T) {
+	stdout, stderr, err := executeCommand("--json", "response-code", "explain", "2", "--family", "transaction_response")
+	if err != nil {
+		t.Fatalf("expected JSON response-code explain to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	want := `{
+  "schema_version": "0.1.0",
+  "command": "authnet response-code explain",
+  "redacted": true,
+  "warnings": [],
+  "errors": [],
+  "data": {
+    "query_code": "2",
+    "query_family": "transaction_response",
+    "matches": [
+      {
+        "code": "2",
+        "family": "transaction_response",
+        "title": "Declined",
+        "source_meaning": "The transaction was declined.",
+        "likely_causes": [
+          "The issuer or processor declined the payment request."
+        ],
+        "recommended_next_steps": [
+          "Do not retry blindly. Ask the operator to review the detailed response reason and use another payment method if needed."
+        ],
+        "source_links": [
+          "https://developer.authorize.net/api/reference/index.html"
+        ]
+      }
+    ],
+    "reference": {
+      "version": "2026-05-18",
+      "reviewed_at": "2026-05-18",
+      "maintainer": "authnet-cli curated reference",
+      "maintenance": "Review the official Authorize.Net response-code and API reference pages before each release that changes this file, then update the reference version, review date, records, and tests together.",
+      "sources": [
+        {
+          "title": "Authorize.Net response-code tool",
+          "url": "https://developer.authorize.net/api/reference/responseCodes.html"
+        },
+        {
+          "title": "Authorize.Net API error and response codes",
+          "url": "https://developer.authorize.net/api/reference/features/errorandresponsecodes.html"
+        },
+        {
+          "title": "Authorize.Net API transaction response fields",
+          "url": "https://developer.authorize.net/api/reference/index.html"
+        }
+      ]
+    }
+  }
+}
+`
+	if stdout != want {
+		t.Fatalf("JSON output mismatch\nwant:\n%s\ngot:\n%s", want, stdout)
+	}
+}
+
+func TestResponseCodeExplainDisambiguatesByFamily(t *testing.T) {
+	stdout, stderr, code, err := executeCommandWithExit("--json", "response-code", "explain", "N")
+	if err == nil {
+		t.Fatal("expected ambiguous response code to fail without family")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "ambiguous_response_code"`)
+	assertContains(t, stdout, "response code N is ambiguous")
+	assertContains(t, stdout, `"family": "avs"`)
+	assertContains(t, stdout, `"family": "cvv"`)
+
+	stdout, stderr, err = executeCommand("--json", "response-code", "explain", "N", "--family", "cvv")
+	if err != nil {
+		t.Fatalf("expected family-disambiguated lookup to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"query_family": "cvv"`)
+	assertContains(t, stdout, `"title": "Card code did not match"`)
+	assertNotContains(t, stdout, `"title": "Address and postal code did not match"`)
+}
+
+func TestResponseCodeExplainMissingCodeIncludesMetadata(t *testing.T) {
+	stdout, stderr, code, err := executeCommandWithExit("--json", "response-code", "explain", "ZZZ")
+	if err == nil {
+		t.Fatal("expected missing response code to fail")
+	}
+	if code != exitNotFound {
+		t.Fatalf("expected not-found exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "response_code_not_found"`)
+	assertContains(t, stdout, `"query_code": "ZZZ"`)
+	assertContains(t, stdout, `"matches": []`)
+	assertContains(t, stdout, `"reviewed_at": "2026-05-18"`)
 }
 
 func TestAuthTestSucceedsWithMockGateway(t *testing.T) {
