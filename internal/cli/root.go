@@ -75,16 +75,24 @@ func Execute(command *cobra.Command) ExitCode {
 	if err == nil {
 		return exitSuccess
 	}
-	var rendered renderedError
-	if errors.As(err, &rendered) {
-		return rendered.exitCode
-	}
 
 	target := executed
 	if target == nil {
 		target = command
 	}
 	options := optionsFromCommand(target)
+	if !options.JSON {
+		var rendered renderedError
+		if !errors.As(err, &rendered) {
+			_, _ = target.ErrOrStderr().Write([]byte(err.Error() + "\n"))
+		}
+		return exitSuccess
+	}
+
+	var rendered renderedError
+	if errors.As(err, &rendered) {
+		return rendered.exitCode
+	}
 	if options.JSON {
 		envelope, code := structuredFailure(target, err)
 		if writeErr := writeOutputJSON(target.OutOrStdout(), envelope, colorEnabled(options)); writeErr != nil {
@@ -94,7 +102,6 @@ func Execute(command *cobra.Command) ExitCode {
 		return code
 	}
 
-	_, _ = target.ErrOrStderr().Write([]byte(err.Error() + "\n"))
 	return exitCodeForError(err)
 }
 

@@ -131,14 +131,14 @@ func TestCompletionCommandIsStatic(t *testing.T) {
 }
 
 func TestGlobalColorValidation(t *testing.T) {
-	_, _, code, err := executeCommandWithExit("--color=purple", "version")
-	if err == nil {
-		t.Fatal("expected invalid color to fail")
+	_, stderr, code, err := executeCommandWithExit("--color=purple", "version")
+	if err != nil {
+		t.Fatalf("expected human invalid color to be shell-safe: %v", err)
 	}
-	if code != exitUsageOrConfig {
-		t.Fatalf("expected usage/config exit code, got %d", code)
+	if code != exitSuccess {
+		t.Fatalf("expected shell-safe success exit code, got %d", code)
 	}
-	assertContains(t, err.Error(), "invalid --color value")
+	assertContains(t, stderr, "invalid --color value")
 }
 
 func TestAutomationModeAcceptsLocalCommands(t *testing.T) {
@@ -188,16 +188,37 @@ func TestJSONFailuresAreStructuredOnStdout(t *testing.T) {
 
 func TestNotImplementedUsesExitTaxonomy(t *testing.T) {
 	stdout, stderr, code, err := executeCommandWithExit("response-code", "explain")
-	if err == nil {
-		t.Fatal("expected scaffold command to fail")
+	if err != nil {
+		t.Fatalf("expected human scaffold command to be shell-safe: %v", err)
 	}
-	if code != exitGeneralFailure {
-		t.Fatalf("expected general failure exit code, got %d", code)
+	if code != exitSuccess {
+		t.Fatalf("expected shell-safe success exit code, got %d", code)
 	}
 	if stdout != "" {
 		t.Fatalf("expected non-JSON failure stdout to stay empty, got %q", stdout)
 	}
 	assertContains(t, stderr, "response-code explain is not implemented in this scaffold")
+}
+
+func TestHumanFailuresAreShellSafe(t *testing.T) {
+	cases := [][]string{
+		{"--color=purple", "version"},
+		{"response-code", "explain"},
+		{"profile", "remove", "--name", "missing"},
+		{"transaction", "list", "--limit", "101"},
+	}
+	for _, args := range cases {
+		stdout, stderr, code, err := executeCommandWithExit(args...)
+		if err != nil {
+			t.Fatalf("expected %v to be shell-safe: %v\nstdout:\n%s\nstderr:\n%s", args, err, stdout, stderr)
+		}
+		if code != exitSuccess {
+			t.Fatalf("expected %v to exit successfully in human mode, got %d\nstdout:\n%s\nstderr:\n%s", args, code, stdout, stderr)
+		}
+		if strings.TrimSpace(stdout) == "" && strings.TrimSpace(stderr) == "" {
+			t.Fatalf("expected %v to render an error or report", args)
+		}
+	}
 }
 
 func TestAuthTestSucceedsWithMockGateway(t *testing.T) {
@@ -1059,6 +1080,24 @@ func TestConfigValidateReportsMissingCredentialSources(t *testing.T) {
 	}
 	assertContains(t, stdout, `"code": "profile_config_invalid"`)
 	assertContains(t, stdout, "MISSING_LOGIN, MISSING_KEY")
+}
+
+func TestConfigValidateHumanInvalidDoesNotFailShell(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--api-login-id-env", "MISSING_LOGIN", "--transaction-key-env", "MISSING_KEY")
+	if err != nil {
+		t.Fatalf("expected setup with credential references to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("config", "validate")
+	if err != nil {
+		t.Fatalf("expected human config validate to report invalid config without failing the shell: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	if code != exitSuccess {
+		t.Fatalf("expected success exit code for human config validate report, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, "status: invalid")
+	assertContains(t, stdout, "missing credential environment variables: MISSING_LOGIN, MISSING_KEY")
 }
 
 func TestPathsUsesConfigDirectoryOverride(t *testing.T) {
