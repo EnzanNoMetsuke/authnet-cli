@@ -25,6 +25,25 @@ Follow the mandatory issue, verification, commit, and tracker-update workflow in
 
 Use the project linting workflow in `docs/agents/linting.md`.
 
+### Go test execution
+
+Run Go tests with repo-local caches from the start. Do not run bare `go test` in this repo.
+
+Use the Makefile targets when possible:
+
+```sh
+GOTMPDIR="$PWD/.cache/go-tmp" make verify
+make test-sandbox-integration
+```
+
+For focused `go test` commands, use repo-local caches explicitly:
+
+```sh
+GOTMPDIR="$PWD/.cache/go-tmp" GOCACHE="$PWD/.cache/go-build" GOMODCACHE="$PWD/.cache/go-mod" go test ./internal/cli -run '<test-pattern>'
+```
+
+Tests that use `httptest` or live sandbox integration require local networking. Run those with the same repo-local cache settings and request sandbox/network escalation immediately instead of first trying a restricted run.
+
 ### Upstream MCP access
 
 Use the `mcpproxy` MCP server to discover and call upstream MCP servers. First call `retrieve_tools` for the upstream capability you need, then call the exact returned tool name with `call_tool_read`, `call_tool_write`, or `call_tool_destructive` according to the operation. Include a clear intent reason and data-sensitivity classification.
