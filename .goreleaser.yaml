@@ -1,0 +1,77 @@
+version: 2
+
+project_name: authnet
+
+builds:
+  - id: authnet
+    main: ./cmd/authnet
+    binary: authnet
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
+      - -X main.schemaVersion=0.1.0
+      - -X main.contractStatus=pre-release
+
+archives:
+  - id: authnet
+    ids:
+      - authnet
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - README.md
+      - docs/project-spec.md
+      - docs/safety-model.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: EnzanNoMetsuke
+    name: authnet-cli
+  prerelease: auto
+  mode: replace
+
+brews:
+  - name: authnet
+    repository:
+      owner: EnzanNoMetsuke
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/EnzanNoMetsuke/authnet-cli
+    description: Authorize.Net operations CLI
+    install: |
+      bin.install "authnet"
+    test: |
+      system "#{bin}/authnet", "--version"

@@ -87,6 +87,7 @@ func TestVersionCommandPrintsContractMetadata(t *testing.T) {
 	assertContains(t, stdout, "schema version: 0.1.0")
 	assertContains(t, stdout, "contract status: test")
 	assertContains(t, stdout, "commit: test-commit")
+	assertContains(t, stdout, "built: 2026-05-17T00:00:00Z")
 }
 
 func TestVersionCommandPrintsStableJSONEnvelope(t *testing.T) {
@@ -114,6 +115,7 @@ func TestVersionCommandPrintsStableJSONEnvelope(t *testing.T) {
 	assertJSONField(t, data, "schema_version", "0.1.0")
 	assertJSONField(t, data, "contract_status", "test")
 	assertJSONField(t, data, "commit", "test-commit")
+	assertJSONField(t, data, "built_at", "2026-05-17T00:00:00Z")
 	assertNotContains(t, stdout, "\x1b[")
 }
 

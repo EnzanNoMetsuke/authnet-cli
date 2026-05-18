@@ -23,7 +23,7 @@ make build
 ./bin/authnet version
 ```
 
-GitHub Releases are planned as the canonical release source for v1, with checksums and an initial Homebrew tap path. Until then, local builds are the supported install path.
+GitHub Releases are the canonical release source for v1, with checksums and an initial Homebrew tap path. Until the first tag is published, local builds are the supported install path. See the [release process](docs/release.md) for artifact, checksum, changelog, and Homebrew tap details.
 
 ## V1 Command Scope
 
@@ -78,4 +78,4 @@ Run the full local verification set:
 GOTMPDIR="$PWD/.cache/go-tmp" make verify
 ```
 
-Contributor expectations are documented in [CONTRIBUTING.md](CONTRIBUTING.md). Agent and automation usage is documented in [docs/agent-usage.md](docs/agent-usage.md). Response-code reference maintenance is documented in [docs/response-code-reference.md](docs/response-code-reference.md).
+Contributor expectations are documented in [CONTRIBUTING.md](CONTRIBUTING.md). Agent and automation usage is documented in [docs/agent-usage.md](docs/agent-usage.md). Release workflow details are documented in [docs/release.md](docs/release.md). Response-code reference maintenance is documented in [docs/response-code-reference.md](docs/response-code-reference.md).
