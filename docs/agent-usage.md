@@ -87,7 +87,19 @@ authnet completion ...
 
 `authnet response-code explain` uses the checked-in curated reference. It does not fetch live documentation. See [docs/response-code-reference.md](response-code-reference.md).
 
-`authnet sandbox ...` commands are sandbox helper surfaces. They may contact the real Authorize.Net sandbox gateway when implemented.
+`authnet sandbox charge ...` commands are sandbox helper surfaces. They contact the real Authorize.Net sandbox gateway and must use sandbox-classified profiles.
+
+Sandbox charge helpers use test-card aliases instead of raw card numbers:
+
+```sh
+authnet sandbox charge approved --card visa --amount 12.34
+authnet sandbox charge declined --card visa --amount 12.34
+authnet sandbox charge avs --variant no-match --amount 12.34
+authnet sandbox charge cvv --variant no-match --amount 12.34
+authnet sandbox charge duplicate --amount 12.34 --window 120
+```
+
+Agents must not persist full request payloads from sandbox charge helpers because request construction includes sandbox card numbers and CVV/card-code trigger values.
 
 ## Exit Codes
 

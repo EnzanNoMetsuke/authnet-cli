@@ -64,7 +64,11 @@ authnet transaction unsettled list
 authnet customer-profile get
 authnet customer-profile list
 authnet response-code explain
-authnet sandbox ...
+authnet sandbox charge approved
+authnet sandbox charge declined
+authnet sandbox charge avs
+authnet sandbox charge cvv
+authnet sandbox charge duplicate
 authnet completion ...
 ```
 

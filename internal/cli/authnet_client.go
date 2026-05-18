@@ -97,6 +97,52 @@ type getUnsettledTransactionListRequest struct {
 	Paging                 gatewayPaging          `json:"paging"`
 }
 
+type createTransactionRequestEnvelope struct {
+	Request createTransactionRequest `json:"createTransactionRequest"`
+}
+
+type createTransactionRequest struct {
+	MerchantAuthentication merchantAuthentication    `json:"merchantAuthentication"`
+	TransactionRequest     gatewayTransactionRequest `json:"transactionRequest"`
+}
+
+type gatewayTransactionRequest struct {
+	TransactionType     string                      `json:"transactionType"`
+	Amount              string                      `json:"amount"`
+	Payment             gatewayRequestPayment       `json:"payment"`
+	Order               gatewayRequestOrder         `json:"order,omitempty"`
+	BillTo              gatewayRequestBillTo        `json:"billTo,omitempty"`
+	TransactionSettings *gatewayTransactionSettings `json:"transactionSettings,omitempty"`
+}
+
+type gatewayRequestPayment struct {
+	CreditCard gatewayRequestCreditCard `json:"creditCard"`
+}
+
+type gatewayRequestCreditCard struct {
+	CardNumber     string `json:"cardNumber"`
+	ExpirationDate string `json:"expirationDate"`
+	CardCode       string `json:"cardCode,omitempty"`
+}
+
+type gatewayRequestOrder struct {
+	InvoiceNumber string `json:"invoiceNumber,omitempty"`
+	Description   string `json:"description,omitempty"`
+}
+
+type gatewayRequestBillTo struct {
+	Zip string `json:"zip,omitempty"`
+}
+
+type gatewayTransactionSettings struct {
+	Settings []gatewayTransactionSetting `json:"setting,omitempty"`
+}
+
+type gatewayTransactionSetting struct {
+	Name  string `json:"settingName"`
+	Value string `json:"settingValue"`
+}
+
 type gatewayPaging struct {
 	Limit  int `json:"limit"`
 	Offset int `json:"offset"`
@@ -136,6 +182,11 @@ type getUnsettledTransactionListResponseEnvelope struct {
 	Transactions []gatewayTransaction `json:"transactions"`
 }
 
+type createTransactionResponseEnvelope struct {
+	Messages            gatewayMessages            `json:"messages"`
+	TransactionResponse gatewayTransactionResponse `json:"transactionResponse"`
+}
+
 type gatewayMessages struct {
 	ResultCode string           `json:"resultCode"`
 	Message    []gatewayMessage `json:"message"`
@@ -144,6 +195,22 @@ type gatewayMessages struct {
 type gatewayMessage struct {
 	Code string `json:"code"`
 	Text string `json:"text"`
+}
+
+type gatewayTransactionResponse struct {
+	ResponseCode  string                      `json:"responseCode"`
+	TransactionID string                      `json:"transId"`
+	AuthCode      string                      `json:"authCode"`
+	AVSResultCode string                      `json:"avsResultCode"`
+	CVVResultCode string                      `json:"cvvResultCode"`
+	Messages      []gatewayTransactionMessage `json:"messages"`
+	Errors        []gatewayTransactionMessage `json:"errors"`
+}
+
+type gatewayTransactionMessage struct {
+	Code        string `json:"code"`
+	Description string `json:"description"`
+	Text        string `json:"text"`
 }
 
 type gatewayString string
@@ -434,6 +501,32 @@ func (client gatewayClient) getUnsettledTransactionList(ctx context.Context, cre
 			exitCode: exitGatewayFailure,
 			code:     "gateway_response_invalid",
 			message:  "Authorize.Net returned an invalid unsettled transaction list response",
+		}
+	}
+	return parsed, nil
+}
+
+func (client gatewayClient) createTransaction(ctx context.Context, credentials authCredentials, transaction gatewayTransactionRequest) (createTransactionResponseEnvelope, error) {
+	requestBody := createTransactionRequestEnvelope{
+		Request: createTransactionRequest{
+			MerchantAuthentication: merchantAuthentication{
+				Name:           credentials.APILoginID,
+				TransactionKey: credentials.TransactionKey,
+			},
+			TransactionRequest: transaction,
+		},
+	}
+	responseBody, err := client.post(ctx, requestBody, "sandbox transaction")
+	if err != nil {
+		return createTransactionResponseEnvelope{}, err
+	}
+
+	var parsed createTransactionResponseEnvelope
+	if err := decodeGatewayJSON(responseBody, &parsed); err != nil {
+		return createTransactionResponseEnvelope{}, cliError{
+			exitCode: exitGatewayFailure,
+			code:     "gateway_response_invalid",
+			message:  "Authorize.Net returned an invalid sandbox transaction response",
 		}
 	}
 	return parsed, nil

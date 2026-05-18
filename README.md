@@ -44,11 +44,24 @@ authnet transaction unsettled list
 authnet customer-profile get
 authnet customer-profile list
 authnet response-code explain
-authnet sandbox ...
+authnet sandbox charge approved
+authnet sandbox charge declined
+authnet sandbox charge avs
+authnet sandbox charge cvv
+authnet sandbox charge duplicate
 authnet completion ...
 ```
 
 Production reads must use an explicit production profile. A default profile may exist only for sandbox-classified profiles.
+
+Sandbox charge helpers are sandbox-only and use test-card aliases instead of raw card-number entry:
+
+```sh
+authnet sandbox charge approved --card visa --amount 12.34
+authnet sandbox charge avs --variant no-match --amount 12.34
+authnet sandbox charge cvv --variant no-match --amount 12.34
+authnet sandbox charge duplicate --amount 12.34 --window 120
+```
 
 ## Local Development
 

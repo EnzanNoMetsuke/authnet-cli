@@ -186,18 +186,19 @@ func TestJSONFailuresAreStructuredOnStdout(t *testing.T) {
 	assertContains(t, stdout, `"message": "invalid --color value \"purple\": expected auto, always, or never"`)
 }
 
-func TestNotImplementedUsesExitTaxonomy(t *testing.T) {
+func TestSandboxHelpShowsChargeCommands(t *testing.T) {
 	stdout, stderr, code, err := executeCommandWithExit("sandbox")
 	if err != nil {
-		t.Fatalf("expected human scaffold command to be shell-safe: %v", err)
+		t.Fatalf("expected sandbox help to be shell-safe: %v", err)
 	}
 	if code != exitSuccess {
 		t.Fatalf("expected shell-safe success exit code, got %d", code)
 	}
-	if stdout != "" {
-		t.Fatalf("expected non-JSON failure stdout to stay empty, got %q", stdout)
+	if stderr != "" {
+		t.Fatalf("expected sandbox help stderr to stay empty, got %q", stderr)
 	}
-	assertContains(t, stderr, "sandbox is not implemented in this scaffold")
+	assertContains(t, stdout, "charge")
+	assertContains(t, stdout, "Run sandbox-only test helpers")
 }
 
 func TestHumanFailuresAreShellSafe(t *testing.T) {
@@ -329,6 +330,200 @@ func TestResponseCodeExplainMissingCodeIncludesMetadata(t *testing.T) {
 	assertContains(t, stdout, `"query_code": "ZZZ"`)
 	assertContains(t, stdout, `"matches": []`)
 	assertContains(t, stdout, `"reviewed_at": "2026-05-18"`)
+}
+
+func TestSandboxChargeApprovedUsesAliasAndRedactedOutput(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "sandbox-login")
+	t.Setenv(transactionKeyEnvName, "sandbox-key")
+	server := newSandboxTransactionTestServer(t, []sandboxRequestExpectation{{
+		Want: []string{
+			`"createTransactionRequest"`,
+			`"transactionType":"authCaptureTransaction"`,
+			`"amount":"12.34"`,
+			`"cardNumber":"4111111111111111"`,
+			`"cardCode":"900"`,
+		},
+		Body: sandboxApprovedResponse("1000001", "1", "This transaction has been approved.", "Y", "M"),
+	}})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "sandbox", "charge", "approved", "--card", "visa", "--amount", "12.34")
+	if err != nil {
+		t.Fatalf("expected sandbox charge to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"command": "authnet sandbox charge approved"`)
+	assertContains(t, stdout, `"scenario": "approved"`)
+	assertContains(t, stdout, `"card_alias": "visa"`)
+	assertContains(t, stdout, `"transaction_id": "1000001"`)
+	assertContains(t, stdout, `"response_code": "1"`)
+	assertContains(t, stdout, `"avs_response": "Y"`)
+	assertContains(t, stdout, `"card_code_response": "M"`)
+	assertNotContains(t, stdout, "4111111111111111")
+	assertNotContains(t, stdout, "900")
+}
+
+func TestSandboxChargeAVSMatchDefaultsToCompatibleCard(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "sandbox-login")
+	t.Setenv(transactionKeyEnvName, "sandbox-key")
+	server := newSandboxTransactionTestServer(t, []sandboxRequestExpectation{{
+		Want: []string{
+			`"cardNumber":"5424000000000015"`,
+			`"zip":"46214"`,
+		},
+		Body: sandboxApprovedResponse("1000002", "1", "This transaction has been approved.", "X", "M"),
+	}})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "sandbox", "charge", "avs", "--variant", "match")
+	if err != nil {
+		t.Fatalf("expected sandbox avs charge to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"variant": "match"`)
+	assertContains(t, stdout, `"card_alias": "mastercard"`)
+	assertContains(t, stdout, `"avs_response": "X"`)
+	assertNotContains(t, stdout, "5424000000000015")
+}
+
+func TestSandboxChargeRejectsProductionBeforeGatewayRequest(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "prod-login")
+	t.Setenv(transactionKeyEnvName, "prod-key")
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		called = true
+	}))
+	t.Cleanup(server.Close)
+	withGatewayTestEndpoint(t, environmentProduction, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "prod-main", "--environment", "production")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("--json", "--profile", "prod-main", "sandbox", "charge", "approved")
+	if err == nil {
+		t.Fatal("expected production sandbox charge to fail")
+	}
+	if code != exitSafetyDenied {
+		t.Fatalf("expected safety denied exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if called {
+		t.Fatal("production sandbox charge unexpectedly contacted gateway")
+	}
+	assertContains(t, stdout, `"code": "safety_policy_denied"`)
+	assertContains(t, stdout, "sandbox charge helpers require a sandbox-classified profile")
+}
+
+func TestSandboxChargeDuplicateReportsSecondAttempt(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "sandbox-login")
+	t.Setenv(transactionKeyEnvName, "sandbox-key")
+	server := newSandboxTransactionTestServer(t, []sandboxRequestExpectation{
+		{
+			Want: []string{
+				`"settingName":"duplicateWindow","settingValue":"120"`,
+				`"invoiceNumber":"an-dup-`,
+			},
+			Body: sandboxApprovedResponse("1000003", "1", "This transaction has been approved.", "Y", "M"),
+		},
+		{
+			Want: []string{
+				`"settingName":"duplicateWindow","settingValue":"120"`,
+				`"invoiceNumber":"an-dup-`,
+			},
+			Body: `{"messages":{"resultCode":"Error","message":[{"code":"E00027","text":"The transaction was unsuccessful."}]},"transactionResponse":{"responseCode":"3","errors":[{"code":"11","description":"A duplicate transaction has been submitted."}]}}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "sandbox", "charge", "duplicate", "--amount", "12.34", "--window", "120")
+	if err != nil {
+		t.Fatalf("expected sandbox duplicate charge to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"scenario": "duplicate"`)
+	assertContains(t, stdout, `"duplicate_window_seconds": 120`)
+	assertContains(t, stdout, `"attempt": 1`)
+	assertContains(t, stdout, `"attempt": 2`)
+	assertContains(t, stdout, `"duplicate_detected": true`)
+	assertNotContains(t, stdout, "4111111111111111")
+	assertNotContains(t, stdout, "900")
+}
+
+func TestSandboxChargeDuplicateInvoiceNumberFitsGatewayLimit(t *testing.T) {
+	withFixedNow(t, time.Unix(0, 1779119443925440000))
+
+	plan, err := newSandboxChargePlan("duplicate", &sandboxChargeOptions{
+		Card:   "visa",
+		Amount: "1.23",
+		Window: 120,
+	})
+	if err != nil {
+		t.Fatalf("expected duplicate charge plan to build: %v", err)
+	}
+
+	invoiceNumber := plan.gatewayRequest().Order.InvoiceNumber
+	if len(invoiceNumber) > 20 {
+		t.Fatalf("expected invoice number to fit Authorize.Net 20 character limit, got %q length %d", invoiceNumber, len(invoiceNumber))
+	}
+}
+
+func TestSandboxChargeRejectsUnknownAliasAndVariant(t *testing.T) {
+	stdout, stderr, code, err := executeCommandWithExit("--json", "sandbox", "charge", "approved", "--card", "bad")
+	if err == nil {
+		t.Fatal("expected unknown alias to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, "unknown sandbox card alias")
+	assertContains(t, stdout, "visa, mastercard, amex, or discover")
+
+	stdout, stderr, code, err = executeCommandWithExit("--json", "sandbox", "charge", "cvv", "--variant", "bad")
+	if err == nil {
+		t.Fatal("expected unknown variant to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, "unknown sandbox charge cvv variant")
+	assertContains(t, stdout, "match, no-match, not-processed, should-be-present, issuer-unavailable")
+}
+
+func TestSandboxChargeApprovedIntegration(t *testing.T) {
+	if os.Getenv("AUTHNET_SANDBOX_INTEGRATION") != "1" {
+		t.Skip("set AUTHNET_SANDBOX_INTEGRATION=1 with sandbox credentials to run")
+	}
+	if os.Getenv(apiLoginIDEnvName) == "" || os.Getenv(transactionKeyEnvName) == "" {
+		t.Skip("sandbox integration requires AUTHNET_API_LOGIN_ID and AUTHNET_TRANSACTION_KEY")
+	}
+	t.Setenv(configEnvName, t.TempDir())
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "sandbox", "charge", "approved", "--amount", "1.23")
+	if err != nil {
+		t.Fatalf("expected real sandbox charge to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"scenario": "approved"`)
+	assertContains(t, stdout, `"card_alias": "visa"`)
 }
 
 func TestAuthTestSucceedsWithMockGateway(t *testing.T) {
@@ -1431,6 +1626,55 @@ type reportingResponse struct {
 	Want     string
 	AlsoWant []string
 	Body     string
+}
+
+type sandboxRequestExpectation struct {
+	Want []string
+	Body string
+}
+
+func newSandboxTransactionTestServer(t *testing.T, expectations []sandboxRequestExpectation) *httptest.Server {
+	t.Helper()
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			t.Errorf("expected POST request, got %s", request.Method)
+		}
+		if got := request.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("expected JSON content type, got %q", got)
+		}
+		if requests >= len(expectations) {
+			t.Errorf("unexpected extra sandbox transaction request")
+			writer.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		expectation := expectations[requests]
+		requests++
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		text := string(body)
+		for _, want := range expectation.Want {
+			if !strings.Contains(text, want) {
+				t.Errorf("expected request body to contain %s, got %s", want, text)
+			}
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte(expectation.Body))
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		if requests != len(expectations) {
+			t.Errorf("expected %d sandbox transaction requests, got %d", len(expectations), requests)
+		}
+	})
+	return server
+}
+
+func sandboxApprovedResponse(transactionID string, responseCode string, message string, avs string, cvv string) string {
+	return fmt.Sprintf(`{"messages":{"resultCode":"Ok","message":[{"code":"I00001","text":"Successful."}]},"transactionResponse":{"responseCode":%q,"transId":%q,"authCode":"ABC123","avsResultCode":%q,"cvvResultCode":%q,"messages":[{"code":"1","description":%q}]}}`, responseCode, transactionID, avs, cvv, message)
 }
 
 func newReportingTestServer(t *testing.T, responses []reportingResponse) *httptest.Server {

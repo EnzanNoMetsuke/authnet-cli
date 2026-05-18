@@ -299,6 +299,22 @@ V1 does not include eCheck or partial authorization helpers, but both are future
 
 Sandbox helpers should use documented test-card aliases rather than encouraging operators to type raw card numbers.
 
+V1 sandbox helper command surface:
+
+```text
+authnet sandbox charge approved
+authnet sandbox charge declined
+authnet sandbox charge avs --variant <variant>
+authnet sandbox charge cvv --variant <variant>
+authnet sandbox charge duplicate
+```
+
+All sandbox charge scenarios accept `--card <alias>` and `--amount <decimal>`. Supported card aliases are `visa`, `mastercard`, `amex`, and `discover`; the default alias is `visa` unless a scenario requires a different compatible card. The CLI must not expose a normal product-facing raw card-number flag.
+
+Supported AVS variants are `match`, `no-match`, `zip-match`, `address-match`, and `unavailable`. Supported CVV variants are `match`, `no-match`, `not-processed`, `should-be-present`, and `issuer-unavailable`.
+
+Duplicate-window testing uses `authnet sandbox charge duplicate --window <seconds>`, submits two equivalent sandbox `authCaptureTransaction` requests with the Authorize.Net `duplicateWindow` transaction setting, and reports both attempts safely.
+
 ## Release And Distribution
 
 GitHub Releases are the canonical release source.
@@ -438,7 +454,6 @@ Do not list deferred future surfaces as non-goals.
 These should be resolved during implementation planning:
 
 - Exact JSON envelope field names and schema-versioning policy
-- Exact command names under `authnet sandbox ...`
 - Exact config file format
 - Exact keychain backend/library
 - Exact response-code reference source/update workflow

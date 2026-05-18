@@ -137,12 +137,6 @@ func validateGlobalOptions(options *globalOptions) error {
 	return nil
 }
 
-func notImplemented(name string) func(*cobra.Command, []string) error {
-	return func(*cobra.Command, []string) error {
-		return newNotImplementedError(name)
-	}
-}
-
 func optionsFromCommand(cmd *cobra.Command) *globalOptions {
 	if value := cmd.Context().Value(optionsContextKey); value != nil {
 		if options, ok := value.(*globalOptions); ok {

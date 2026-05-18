@@ -176,14 +176,6 @@ func newUsageError(format string, args ...any) error {
 	}
 }
 
-func newNotImplementedError(name string) error {
-	return cliError{
-		exitCode: exitGeneralFailure,
-		code:     "not_implemented",
-		message:  fmt.Sprintf("%s is not implemented in this scaffold", name),
-	}
-}
-
 func colorEnabled(options *globalOptions) bool {
 	return options.Color == "always" && !options.NoColor && !options.Automation
 }

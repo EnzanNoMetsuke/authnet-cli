@@ -397,11 +397,40 @@ func runResponseCodeExplain(cmd *cobra.Command, args []string, options *response
 }
 
 func newSandboxCommand() *cobra.Command {
-	return &cobra.Command{
+	sandbox := &cobra.Command{
 		Use:   "sandbox",
 		Short: "Run sandbox-only test helpers",
-		RunE:  notImplemented("sandbox"),
 	}
+	charge := &cobra.Command{
+		Use:   "charge",
+		Short: "Run sandbox card charge scenarios",
+	}
+	for _, scenario := range []string{"approved", "declined", "avs", "cvv", "duplicate"} {
+		options := sandboxChargeOptions{
+			Card:   defaultSandboxCardAlias,
+			Amount: defaultSandboxChargeAmount,
+			Window: defaultSandboxDuplicateWindow,
+		}
+		command := &cobra.Command{
+			Use:   scenario,
+			Short: sandboxScenarioShort(scenario),
+			RunE: func(cmd *cobra.Command, _ []string) error {
+				options.CardExplicit = cmd.Flags().Changed("card")
+				return runSandboxCharge(cmd, scenario, &options)
+			},
+		}
+		command.Flags().StringVar(&options.Card, "card", defaultSandboxCardAlias, "sandbox card alias: visa, mastercard, amex, discover")
+		command.Flags().StringVar(&options.Amount, "amount", defaultSandboxChargeAmount, "charge amount")
+		if scenario == "avs" || scenario == "cvv" {
+			command.Flags().StringVar(&options.Variant, "variant", "", sandboxVariantHelp(scenario))
+		}
+		if scenario == "duplicate" {
+			command.Flags().IntVar(&options.Window, "window", defaultSandboxDuplicateWindow, "duplicate window in seconds")
+		}
+		charge.AddCommand(command)
+	}
+	sandbox.AddCommand(charge)
+	return sandbox
 }
 
 type versionData struct {
