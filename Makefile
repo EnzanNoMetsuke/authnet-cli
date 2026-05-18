@@ -1,6 +1,7 @@
 GOLANGCI_LINT_VERSION := v2.12.2
 LOCAL_BIN := $(CURDIR)/bin
 GOLANGCI_LINT := $(LOCAL_BIN)/golangci-lint
+AUTHNET_BIN ?= $(CURDIR)/bin/authnet
 GOCACHE ?= $(CURDIR)/.cache/go-build
 GOMODCACHE ?= $(CURDIR)/.cache/go-mod
 GOLANGCI_LINT_CACHE ?= $(CURDIR)/.cache/golangci-lint
@@ -17,7 +18,7 @@ vet:
 	GOCACHE="$(GOCACHE)" GOMODCACHE="$(GOMODCACHE)" go vet ./...
 
 build:
-	GOCACHE="$(GOCACHE)" GOMODCACHE="$(GOMODCACHE)" go build -o /tmp/authnet ./cmd/authnet
+	GOCACHE="$(GOCACHE)" GOMODCACHE="$(GOMODCACHE)" go build -o "$(AUTHNET_BIN)" ./cmd/authnet
 
 verify: fmt test vet build golangci-lint-full
 
