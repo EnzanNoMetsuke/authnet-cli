@@ -78,4 +78,13 @@ Run the full local verification set:
 GOTMPDIR="$PWD/.cache/go-tmp" make verify
 ```
 
-Contributor expectations are documented in [CONTRIBUTING.md](CONTRIBUTING.md). Agent and automation usage is documented in [docs/agent-usage.md](docs/agent-usage.md). Release workflow details are documented in [docs/release.md](docs/release.md). Response-code reference maintenance is documented in [docs/response-code-reference.md](docs/response-code-reference.md).
+Run opt-in live sandbox integration tests only with sandbox credentials:
+
+```sh
+AUTHNET_API_LOGIN_ID="<sandbox-api-login-id>" \
+AUTHNET_TRANSACTION_KEY="<sandbox-transaction-key>" \
+GOTMPDIR="$PWD/.cache/go-tmp" \
+make test-sandbox-integration
+```
+
+Contributor expectations are documented in [CONTRIBUTING.md](CONTRIBUTING.md). Agent and automation usage is documented in [docs/agent-usage.md](docs/agent-usage.md). Sandbox integration CI is documented in [docs/sandbox-integration-ci.md](docs/sandbox-integration-ci.md). Release workflow details are documented in [docs/release.md](docs/release.md). Response-code reference maintenance is documented in [docs/response-code-reference.md](docs/response-code-reference.md).

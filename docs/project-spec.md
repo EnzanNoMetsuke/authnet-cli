@@ -352,6 +352,8 @@ Sandbox integration tests:
 - Require explicit credentials.
 - Not required pull-request gates.
 - May run manually or on a schedule in CI.
+- Cover `authnet auth test` and at least one sandbox Card helper path.
+- Skip successfully when explicit enablement or sandbox credentials are absent.
 
 Required regression coverage:
 

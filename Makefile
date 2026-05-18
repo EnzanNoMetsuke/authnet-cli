@@ -12,13 +12,16 @@ GOCACHE ?= $(CURDIR)/.cache/go-build
 GOMODCACHE ?= $(CURDIR)/.cache/go-mod
 GOLANGCI_LINT_CACHE ?= $(CURDIR)/.cache/golangci-lint
 
-.PHONY: fmt test vet build release-snapshot release-check docs-check verify golangci-lint-install golangci-lint-full install-git-hooks
+.PHONY: fmt test test-sandbox-integration vet build release-snapshot release-check docs-check verify golangci-lint-install golangci-lint-full install-git-hooks
 
 fmt:
 	gofmt -w cmd internal
 
 test:
 	GOCACHE="$(GOCACHE)" GOMODCACHE="$(GOMODCACHE)" go test ./...
+
+test-sandbox-integration:
+	AUTHNET_SANDBOX_INTEGRATION=1 GOCACHE="$(GOCACHE)" GOMODCACHE="$(GOMODCACHE)" go test ./internal/cli -run 'TestSandboxAuthAndChargeApprovedIntegration' -count=1
 
 vet:
 	GOCACHE="$(GOCACHE)" GOMODCACHE="$(GOMODCACHE)" go vet ./...

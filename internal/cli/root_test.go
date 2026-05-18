@@ -511,7 +511,7 @@ func TestSandboxChargeRejectsUnknownAliasAndVariant(t *testing.T) {
 	assertContains(t, stdout, "match, no-match, not-processed, should-be-present, issuer-unavailable")
 }
 
-func TestSandboxChargeApprovedIntegration(t *testing.T) {
+func TestSandboxAuthAndChargeApprovedIntegration(t *testing.T) {
 	if os.Getenv("AUTHNET_SANDBOX_INTEGRATION") != "1" {
 		t.Skip("set AUTHNET_SANDBOX_INTEGRATION=1 with sandbox credentials to run")
 	}
@@ -524,7 +524,19 @@ func TestSandboxChargeApprovedIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected profile setup to succeed: %v", err)
 	}
-	stdout, stderr, err := executeCommand("--json", "sandbox", "charge", "approved", "--amount", "1.23")
+
+	stdout, stderr, err := executeCommand("--json", "auth", "test")
+	if err != nil {
+		t.Fatalf("expected real sandbox auth test to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"command": "authnet auth test"`)
+	assertContains(t, stdout, `"profile_name": "sandbox-main"`)
+	assertContains(t, stdout, `"environment_classification": "sandbox"`)
+	assertContains(t, stdout, `"authenticated": true`)
+	assertNotContains(t, stdout, os.Getenv(apiLoginIDEnvName))
+	assertNotContains(t, stdout, os.Getenv(transactionKeyEnvName))
+
+	stdout, stderr, err = executeCommand("--json", "sandbox", "charge", "approved", "--amount", "1.23")
 	if err != nil {
 		t.Fatalf("expected real sandbox charge to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
 	}

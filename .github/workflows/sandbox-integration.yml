@@ -1,0 +1,66 @@
+name: sandbox-integration
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_sandbox_integration:
+        description: "Run live Authorize.Net sandbox integration tests"
+        required: true
+        type: boolean
+        default: false
+  schedule:
+    - cron: "17 10 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  sandbox-integration:
+    name: sandbox integration
+    runs-on: ubuntu-latest
+    env:
+      AUTHNET_API_LOGIN_ID: ${{ secrets.AUTHNET_API_LOGIN_ID }}
+      AUTHNET_TRANSACTION_KEY: ${{ secrets.AUTHNET_TRANSACTION_KEY }}
+      AUTHNET_SANDBOX_ENABLED: ${{ vars.AUTHNET_SANDBOX_ENABLED }}
+      WORKFLOW_DISPATCH_ENABLED: ${{ inputs.run_sandbox_integration }}
+    steps:
+      - name: Check opt-in and credentials
+        id: gate
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${WORKFLOW_DISPATCH_ENABLED}" != "true" ]]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Sandbox integration skipped: workflow_dispatch input run_sandbox_integration was not true."
+            exit 0
+          fi
+
+          if [[ "${GITHUB_EVENT_NAME}" == "schedule" && "${AUTHNET_SANDBOX_ENABLED}" != "true" ]]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Sandbox integration skipped: repository variable AUTHNET_SANDBOX_ENABLED is not true."
+            exit 0
+          fi
+
+          if [[ -z "${AUTHNET_API_LOGIN_ID}" || -z "${AUTHNET_TRANSACTION_KEY}" ]]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Sandbox integration skipped: required sandbox credential secrets are not configured."
+            exit 0
+          fi
+
+          echo "run=true" >> "$GITHUB_OUTPUT"
+
+      - name: Check out repository
+        if: ${{ steps.gate.outputs.run == 'true' }}
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        if: ${{ steps.gate.outputs.run == 'true' }}
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run sandbox integration tests
+        if: ${{ steps.gate.outputs.run == 'true' }}
+        env:
+          AUTHNET_SANDBOX_INTEGRATION: "1"
+        run: make test-sandbox-integration
