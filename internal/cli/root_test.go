@@ -471,21 +471,30 @@ func TestSandboxChargeDuplicateReportsSecondAttempt(t *testing.T) {
 	assertNotContains(t, stdout, "900")
 }
 
-func TestSandboxChargeDuplicateInvoiceNumberFitsGatewayLimit(t *testing.T) {
+func TestSandboxChargeInvoiceNumbersFitGatewayLimit(t *testing.T) {
 	withFixedNow(t, time.Unix(0, 1779119443925440000))
 
-	plan, err := newSandboxChargePlan("duplicate", &sandboxChargeOptions{
-		Card:   "visa",
-		Amount: "1.23",
-		Window: 120,
-	})
-	if err != nil {
-		t.Fatalf("expected duplicate charge plan to build: %v", err)
+	cases := []struct {
+		scenario string
+		options  sandboxChargeOptions
+	}{
+		{scenario: "approved", options: sandboxChargeOptions{Card: "visa", Amount: "1.23"}},
+		{scenario: "declined", options: sandboxChargeOptions{Card: "visa", Amount: "1.23"}},
+		{scenario: "avs", options: sandboxChargeOptions{Card: "mastercard", Amount: "1.23", Variant: "match"}},
+		{scenario: "cvv", options: sandboxChargeOptions{Card: "visa", Amount: "1.23", Variant: "match"}},
+		{scenario: "duplicate", options: sandboxChargeOptions{Card: "visa", Amount: "1.23", Window: 120}},
 	}
+	for _, testCase := range cases {
+		plan, err := newSandboxChargePlan(testCase.scenario, &testCase.options)
+		if err != nil {
+			t.Fatalf("expected %s charge plan to build: %v", testCase.scenario, err)
+		}
 
-	invoiceNumber := plan.gatewayRequest().Order.InvoiceNumber
-	if len(invoiceNumber) > 20 {
-		t.Fatalf("expected invoice number to fit Authorize.Net 20 character limit, got %q length %d", invoiceNumber, len(invoiceNumber))
+		invoiceNumber := plan.gatewayRequest().Order.InvoiceNumber
+		if len(invoiceNumber) > 20 {
+			t.Fatalf("expected %s invoice number to fit Authorize.Net 20 character limit, got %q length %d", testCase.scenario, invoiceNumber, len(invoiceNumber))
+		}
+		assertContains(t, invoiceNumber, "an-")
 	}
 }
 

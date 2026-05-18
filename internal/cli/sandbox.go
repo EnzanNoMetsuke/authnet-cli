@@ -289,7 +289,7 @@ func newSandboxChargePlan(scenario string, options *sandboxChargeOptions) (sandb
 		PostalCode:  card.PostalCode,
 		CardCode:    card.CardCode,
 		Description: "authnet sandbox " + scenario,
-		OrderID:     "authnet-" + scenario,
+		OrderID:     sandboxOrderID(scenario),
 	}
 	switch scenario {
 	case "approved":
@@ -310,7 +310,7 @@ func newSandboxChargePlan(scenario string, options *sandboxChargeOptions) (sandb
 		plan.Variant = variant.Name
 		plan.PostalCode = variant.PostalCode
 		plan.Description = "authnet sandbox avs " + variant.Name
-		plan.OrderID = "authnet-avs-" + variant.Name
+		plan.OrderID = sandboxOrderID("avs")
 	case "cvv":
 		variant, err := lookupSandboxVariant(options.Variant, sandboxCVVVariants, "cvv", "match, no-match, not-processed, should-be-present, issuer-unavailable")
 		if err != nil {
@@ -319,17 +319,35 @@ func newSandboxChargePlan(scenario string, options *sandboxChargeOptions) (sandb
 		plan.Variant = variant.Name
 		plan.CardCode = cvvCodeForCard(card, variant.CardCode)
 		plan.Description = "authnet sandbox cvv " + variant.Name
-		plan.OrderID = "authnet-cvv-" + variant.Name
+		plan.OrderID = sandboxOrderID("cvv")
 	case "duplicate":
 		if options.Window < 1 || options.Window > maxSandboxDuplicateWindow {
 			return sandboxChargePlan{}, newUsageError("--window must be between 1 and %d seconds", maxSandboxDuplicateWindow)
 		}
 		plan.Description = "authnet sandbox duplicate"
-		plan.OrderID = "an-dup-" + strconv.FormatInt(nowFunc().UnixNano(), 36)
+		plan.OrderID = sandboxOrderID("dup")
 	default:
 		return sandboxChargePlan{}, newUsageError("unknown sandbox charge scenario %q", scenario)
 	}
 	return plan, nil
+}
+
+func sandboxOrderID(scenario string) string {
+	prefixes := map[string]string{
+		"approved": "ok",
+		"declined": "dec",
+		"avs":      "avs",
+		"cvv":      "cvv",
+		"dup":      "dup",
+	}
+	prefix, ok := prefixes[scenario]
+	if !ok {
+		prefix = scenario
+		if len(prefix) > 3 {
+			prefix = prefix[:3]
+		}
+	}
+	return "an-" + prefix + "-" + strconv.FormatInt(nowFunc().UnixNano(), 36)
 }
 
 func lookupSandboxVariant(value string, variants map[string]sandboxVariant, scenario string, expected string) (sandboxVariant, error) {
