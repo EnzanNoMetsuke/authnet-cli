@@ -334,6 +334,21 @@ func TestResponseCodeExplainMissingCodeIncludesMetadata(t *testing.T) {
 	assertContains(t, stdout, `"reviewed_at": "2026-05-18"`)
 }
 
+func TestResponseCodeExplainAmbiguousHumanOutputUsesTable(t *testing.T) {
+	stdout, stderr, code, err := executeCommandWithExit("response-code", "explain", "N")
+	if err != nil {
+		t.Fatalf("expected human ambiguous response code to render without shell failure: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	if code != exitSuccess {
+		t.Fatalf("expected human ambiguous response code to return success, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, "response code N is ambiguous")
+	assertContains(t, stdout, "Family")
+	assertContains(t, stdout, "Title")
+	assertContains(t, stdout, "avs")
+	assertContains(t, stdout, "cvv")
+}
+
 func TestSandboxChargeApprovedUsesAliasAndRedactedOutput(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 	t.Setenv(apiLoginIDEnvName, "sandbox-login")
@@ -467,6 +482,48 @@ func TestSandboxChargeDuplicateReportsSecondAttempt(t *testing.T) {
 	assertContains(t, stdout, `"gateway_message_code": "11"`)
 	assertContains(t, stdout, `"message": "A duplicate transaction has been submitted."`)
 	assertContains(t, stdout, `"duplicate_detected": true`)
+	assertNotContains(t, stdout, "4111111111111111")
+	assertNotContains(t, stdout, "900")
+}
+
+func TestSandboxChargeDuplicateHumanOutputUsesAttemptTable(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "sandbox-login")
+	t.Setenv(transactionKeyEnvName, "sandbox-key")
+	server := newSandboxTransactionTestServer(t, []sandboxRequestExpectation{
+		{
+			Want: []string{
+				`"settingName":"duplicateWindow","settingValue":"120"`,
+				`"invoiceNumber":"an-dup-`,
+			},
+			Body: sandboxApprovedResponse("1000003", "1", "This transaction has been approved.", "Y", "M"),
+		},
+		{
+			Want: []string{
+				`"settingName":"duplicateWindow","settingValue":"120"`,
+				`"invoiceNumber":"an-dup-`,
+			},
+			Body: `{"messages":{"resultCode":"Error","message":[{"code":"E00027","text":"The transaction was unsuccessful."}]},"transactionResponse":{"responseCode":"3","transId":"1000003","authCode":"ABC123","avsResultCode":"Y","cvvResultCode":"M","errors":[{"errorCode":"11","errorText":"A duplicate transaction has been submitted."}]}}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("sandbox", "charge", "duplicate", "--amount", "12.34", "--window", "120")
+	if err != nil {
+		t.Fatalf("expected sandbox duplicate charge to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, "sandbox charge: duplicate")
+	assertContains(t, stdout, "Attempt")
+	assertContains(t, stdout, "Response")
+	assertContains(t, stdout, "Transaction")
+	assertContains(t, stdout, "Duplicate")
+	assertContains(t, stdout, "1000003")
+	assertContains(t, stdout, "detected")
 	assertNotContains(t, stdout, "4111111111111111")
 	assertNotContains(t, stdout, "900")
 }
@@ -1020,6 +1077,10 @@ func TestTransactionUnsettledListUsesDistinctGatewayRequest(t *testing.T) {
 	}
 
 	assertContains(t, stdout, "unsettled transactions: 1")
+	assertContains(t, stdout, "Transaction")
+	assertContains(t, stdout, "Status")
+	assertContains(t, stdout, "Amount")
+	assertContains(t, stdout, "Payment")
 	assertContains(t, stdout, "9001")
 	assertContains(t, stdout, "capturedPendingSettlement")
 	assertContains(t, stdout, "MasterCard XXXX2222")
@@ -1189,7 +1250,16 @@ func TestCustomerProfileListSucceedsWithMockGateway(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected profile setup to succeed: %v", err)
 	}
-	stdout, stderr, err := executeCommand("--json", "customer-profile", "list")
+	stdout, stderr, err := executeCommand("customer-profile", "list")
+	if err != nil {
+		t.Fatalf("expected human customer-profile list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, "customer profiles: 2")
+	assertContains(t, stdout, "Customer Profile")
+	assertContains(t, stdout, "1001")
+	assertContains(t, stdout, "1002")
+
+	stdout, stderr, err = executeCommand("--json", "customer-profile", "list")
 	if err != nil {
 		t.Fatalf("expected customer-profile list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
 	}
@@ -1277,7 +1347,7 @@ func TestCustomerProfileGetHumanOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected profile setup to succeed: %v", err)
 	}
-	stdout, stderr, err := executeCommand("customer-profile", "get", "1001")
+	stdout, stderr, err := executeCommand("customer-profile", "get", "1001", "--include-payment-profiles", "--include-shipping-addresses")
 	if err != nil {
 		t.Fatalf("expected customer-profile get to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
 	}
@@ -1285,6 +1355,10 @@ func TestCustomerProfileGetHumanOutput(t *testing.T) {
 	assertContains(t, stdout, "merchant customer: merchant-1001")
 	assertContains(t, stdout, "payment profiles: 1")
 	assertContains(t, stdout, "shipping addresses: 1")
+	assertContains(t, stdout, "Payment Profile")
+	assertContains(t, stdout, "Shipping Address")
+	assertContains(t, stdout, "2002")
+	assertContains(t, stdout, "3003")
 }
 
 func TestExplicitColorCanApplyToHumanWarningsAndJSON(t *testing.T) {
@@ -1325,8 +1399,14 @@ func TestProfileSetupListValidateAndRemove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected profile list to succeed: %v", err)
 	}
-	assertContains(t, stdout, "sandbox-main\tsandbox\tenv default")
-	assertContains(t, stdout, "prod-main\tproduction\tPRODUCTION\tenv")
+	assertContains(t, stdout, "Name")
+	assertContains(t, stdout, "Environment")
+	assertContains(t, stdout, "Credential Source")
+	assertContains(t, stdout, "Default")
+	assertContains(t, stdout, "sandbox-main")
+	assertContains(t, stdout, "default")
+	assertContains(t, stdout, "prod-main")
+	assertContains(t, stdout, "PRODUCTION")
 
 	stdout, stderr, err = executeCommand("--json", "config", "validate")
 	if err != nil {
@@ -1429,6 +1509,9 @@ func TestConfigValidateHumanInvalidDoesNotFailShell(t *testing.T) {
 		t.Fatalf("expected success exit code for human config validate report, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
 	assertContains(t, stdout, "status: invalid")
+	assertContains(t, stdout, "Check")
+	assertContains(t, stdout, "Status")
+	assertContains(t, stdout, "Message")
 	assertContains(t, stdout, "missing credential environment variables: MISSING_LOGIN, MISSING_KEY")
 }
 

@@ -465,31 +465,23 @@ func renderSandboxChargeResult(cmd *cobra.Command, data sandboxChargeData) error
 					return err
 				}
 			}
+			rows := make([][]string, 0, len(data.Attempts))
 			for _, attempt := range data.Attempts {
-				if _, err := fmt.Fprintf(writer, "attempt %d: response %s transaction %s message %s\n",
-					attempt.Attempt,
+				duplicate := ""
+				if attempt.DuplicateDetected {
+					duplicate = "detected"
+				}
+				rows = append(rows, []string{
+					strconv.Itoa(attempt.Attempt),
 					firstNonEmpty(attempt.ResponseCode, "(none)"),
 					firstNonEmpty(attempt.TransactionID, "(none)"),
+					firstNonEmpty(attempt.AVSResponse, "(none)"),
+					firstNonEmpty(attempt.CardCodeResponse, "(none)"),
+					duplicate,
 					firstNonEmpty(attempt.Message, "(none)"),
-				); err != nil {
-					return err
-				}
-				if attempt.AVSResponse != "" || attempt.CardCodeResponse != "" {
-					if _, err := fmt.Fprintf(writer, "attempt %d checks: avs %s cvv %s\n",
-						attempt.Attempt,
-						firstNonEmpty(attempt.AVSResponse, "(none)"),
-						firstNonEmpty(attempt.CardCodeResponse, "(none)"),
-					); err != nil {
-						return err
-					}
-				}
-				if attempt.DuplicateDetected {
-					if _, err := fmt.Fprintf(writer, "attempt %d duplicate: detected\n", attempt.Attempt); err != nil {
-						return err
-					}
-				}
+				})
 			}
-			return nil
+			return writeHumanTable(writer, []string{"Attempt", "Response", "Transaction", "AVS", "CVV", "Duplicate", "Message"}, rows, colorEnabled(optionsFromCommand(cmd)))
 		},
 	})
 }

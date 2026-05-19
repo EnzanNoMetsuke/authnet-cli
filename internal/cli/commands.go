@@ -115,12 +115,11 @@ func newConfigCommand() *cobra.Command {
 					if _, err := fmt.Fprintf(writer, "profile config: %s\nstatus: %s\nprofiles: %d\n", store.path, status, len(file.Profiles)); err != nil {
 						return err
 					}
+					rows := make([][]string, 0, len(result.Checks))
 					for _, check := range result.Checks {
-						if _, err := fmt.Fprintf(writer, "- %s: %s - %s\n", check.Name, check.Status, check.Message); err != nil {
-							return err
-						}
+						rows = append(rows, []string{check.Name, check.Status, check.Message})
 					}
-					return nil
+					return writeHumanTable(writer, []string{"Check", "Status", "Message"}, rows, colorEnabled(optionsFromCommand(cmd)))
 				},
 			})
 			if renderErr != nil {
@@ -177,22 +176,15 @@ func newProfileCommand() *cobra.Command {
 						_, err := fmt.Fprintln(writer, "no profiles configured")
 						return err
 					}
+					rows := make([][]string, 0, len(data.Profiles))
 					for _, item := range data.Profiles {
 						defaultMarker := ""
 						if item.Default {
-							defaultMarker = " default"
+							defaultMarker = "default"
 						}
-						if item.ProductionMarker != "" {
-							if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%s%s\n", item.Name, item.Environment, item.ProductionMarker, item.CredentialSource.Type, defaultMarker); err != nil {
-								return err
-							}
-							continue
-						}
-						if _, err := fmt.Fprintf(writer, "%s\t%s\t%s%s\n", item.Name, item.Environment, item.CredentialSource.Type, defaultMarker); err != nil {
-							return err
-						}
+						rows = append(rows, []string{item.Name, item.Environment, item.ProductionMarker, item.CredentialSource.Type, defaultMarker})
 					}
-					return nil
+					return writeHumanTable(writer, []string{"Name", "Environment", "Marker", "Credential Source", "Default"}, rows, colorEnabled(optionsFromCommand(cmd)))
 				},
 			})
 		},
@@ -338,12 +330,11 @@ func runResponseCodeExplain(cmd *cobra.Command, args []string, options *response
 				if _, err := fmt.Fprintln(writer, ambiguousResponseCodeMessage(data)); err != nil {
 					return err
 				}
+				rows := make([][]string, 0, len(data.Matches))
 				for _, match := range data.Matches {
-					if _, err := fmt.Fprintf(writer, "- %s: %s\n", match.Family, match.Title); err != nil {
-						return err
-					}
+					rows = append(rows, []string{match.Family, match.Title})
 				}
-				return nil
+				return writeHumanTable(writer, []string{"Family", "Title"}, rows, colorEnabled(optionsFromCommand(cmd)))
 			}
 			match := data.Matches[0]
 			if _, err := fmt.Fprintf(writer, "code: %s\nfamily: %s\nmeaning: %s\n", match.Code, match.Family, match.Meaning); err != nil {
@@ -905,17 +896,22 @@ func runCustomerProfileGet(cmd *cobra.Command, args []string, getOptions *custom
 			); writeErr != nil {
 				return writeErr
 			}
+			paymentProfileRows := make([][]string, 0, len(data.PaymentProfiles))
 			for _, item := range data.PaymentProfiles {
-				if _, writeErr := fmt.Fprintf(writer, "payment profile: %s %s %s\n", item.CustomerPaymentProfileID, item.AccountType, item.AccountNumber); writeErr != nil {
-					return writeErr
-				}
+				paymentProfileRows = append(paymentProfileRows, []string{
+					item.CustomerPaymentProfileID,
+					firstNonEmpty(item.AccountType, "(none)"),
+					firstNonEmpty(item.AccountNumber, "(none)"),
+				})
 			}
+			if writeErr := writeHumanTable(writer, []string{"Payment Profile", "Type", "Account"}, paymentProfileRows, colorEnabled(optionsFromCommand(cmd))); writeErr != nil {
+				return writeErr
+			}
+			shippingAddressRows := make([][]string, 0, len(data.ShippingAddresses))
 			for _, item := range data.ShippingAddresses {
-				if _, writeErr := fmt.Fprintf(writer, "shipping address: %s\n", item.CustomerAddressID); writeErr != nil {
-					return writeErr
-				}
+				shippingAddressRows = append(shippingAddressRows, []string{item.CustomerAddressID})
 			}
-			return nil
+			return writeHumanTable(writer, []string{"Shipping Address"}, shippingAddressRows, colorEnabled(optionsFromCommand(cmd)))
 		},
 	})
 }
@@ -960,12 +956,11 @@ func runCustomerProfileList(cmd *cobra.Command, _ []string) error {
 			); writeErr != nil {
 				return writeErr
 			}
+			rows := make([][]string, 0, len(data.CustomerProfileIDs))
 			for _, customerProfileID := range data.CustomerProfileIDs {
-				if _, writeErr := fmt.Fprintf(writer, "%s\n", customerProfileID); writeErr != nil {
-					return writeErr
-				}
+				rows = append(rows, []string{customerProfileID})
 			}
-			return nil
+			return writeHumanTable(writer, []string{"Customer Profile"}, rows, colorEnabled(optionsFromCommand(cmd)))
 		},
 	})
 }
@@ -1014,18 +1009,21 @@ func renderTransactionListResult(cmd *cobra.Command, data transactionListData) e
 					return writeErr
 				}
 			}
+			rows := make([][]string, 0, len(data.Transactions))
 			for _, item := range data.Transactions {
-				if _, writeErr := fmt.Fprintf(writer, "%s\t%s\t%s\t%s %s\n",
+				rows = append(rows, []string{
 					item.TransactionID,
 					item.TransactionStatus,
-					item.SettleAmount,
-					item.Payment.AccountType,
-					item.Payment.AccountNumber,
-				); writeErr != nil {
-					return writeErr
+					firstNonEmpty(item.SettleAmount, "(none)"),
+					strings.TrimSpace(firstNonEmpty(item.Payment.AccountType, "") + " " + firstNonEmpty(item.Payment.AccountNumber, "")),
+				})
+			}
+			for i := range rows {
+				if rows[i][3] == "" {
+					rows[i][3] = "(none)"
 				}
 			}
-			return nil
+			return writeHumanTable(writer, []string{"Transaction", "Status", "Amount", "Payment"}, rows, colorEnabled(optionsFromCommand(cmd)))
 		},
 	})
 }

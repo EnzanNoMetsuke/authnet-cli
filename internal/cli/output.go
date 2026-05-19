@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/table"
 	"github.com/spf13/cobra"
 )
 
@@ -98,6 +100,39 @@ func renderHumanWarnings(writer io.Writer, warnings []warning, color bool) error
 		}
 	}
 	return nil
+}
+
+func renderHumanTable(headers []string, rows [][]string, color bool) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	headerStyle := lipgloss.NewStyle()
+	borderStyle := lipgloss.NewStyle()
+	if color {
+		headerStyle = headerStyle.Bold(true).Foreground(lipgloss.Color("39"))
+		borderStyle = borderStyle.Foreground(lipgloss.Color("240"))
+	}
+	return table.New().
+		Border(lipgloss.NormalBorder()).
+		BorderStyle(borderStyle).
+		Headers(headers...).
+		Rows(rows...).
+		StyleFunc(func(row int, _ int) lipgloss.Style {
+			if row == table.HeaderRow {
+				return headerStyle
+			}
+			return lipgloss.NewStyle()
+		}).
+		String()
+}
+
+func writeHumanTable(writer io.Writer, headers []string, rows [][]string, color bool) error {
+	rendered := renderHumanTable(headers, rows, color)
+	if rendered == "" {
+		return nil
+	}
+	_, err := fmt.Fprintln(writer, rendered)
+	return err
 }
 
 func newEnvelope(cmd *cobra.Command, data any, warnings []warning, errs []structuredError) envelope {
