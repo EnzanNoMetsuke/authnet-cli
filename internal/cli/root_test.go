@@ -1372,7 +1372,12 @@ func TestExplicitColorCanApplyToHumanWarningsAndJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected JSON version command to succeed: %v", err)
 	}
-	assertContains(t, stdout, "\x1b[36m")
+	assertContains(t, stdout, "\x1b[")
+	assertNotContains(t, stdout, "\x1b[36m{")
+	if len(uniqueANSISequences(stdout)) < 2 {
+		t.Fatalf("expected JSON syntax highlighting to use multiple ANSI styles, got:\n%q", stdout)
+	}
+	assertContains(t, stripANSI(stdout), `"version": "0.1.0-test"`)
 }
 
 func TestProfileSetupListValidateAndRemove(t *testing.T) {

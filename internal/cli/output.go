@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
+	"github.com/alecthomas/chroma/v2/quick"
 	"github.com/spf13/cobra"
 )
 
@@ -172,14 +174,12 @@ func writeOutputJSON(writer io.Writer, value any, color bool) error {
 	if !color {
 		return writeJSON(writer, value)
 	}
-	if _, err := writer.Write([]byte("\x1b[36m")); err != nil {
+
+	var buffer bytes.Buffer
+	if err := writeJSON(&buffer, value); err != nil {
 		return err
 	}
-	if err := writeJSON(writer, value); err != nil {
-		return err
-	}
-	_, err := writer.Write([]byte("\x1b[0m"))
-	return err
+	return quick.Highlight(writer, buffer.String(), "json", "terminal256", "monokai")
 }
 
 func structuredFailure(cmd *cobra.Command, err error) (envelope, ExitCode) {
