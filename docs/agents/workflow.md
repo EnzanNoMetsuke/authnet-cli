@@ -20,6 +20,8 @@ After changing code or project files, run all applicable formatters, linters, ty
 
 Use the repository's existing tooling and conventions. When a tool is not yet established, use the closest standard tool for the language or file type and document any verification gap in the final report.
 
+When a change affects the stable JSON contract, explicitly evaluate whether the JSON schema version should change. This includes changes to envelope fields, command-specific `data` fields, structured warnings or errors, redaction indicators, profile/environment metadata, or documented JSON semantics. If a bump is needed, recommend it clearly and follow the release metadata update path in `docs/release.md`.
+
 ## Commits
 
 Once all changes pass verification, group related changes together and commit them with a concise, multi-line conventional commit message.
