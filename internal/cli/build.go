@@ -4,7 +4,7 @@ package cli
 const (
 	defaultVersion        = "0.0.0-dev"
 	defaultSchemaVersion  = "0.1.0"
-	defaultContractStatus = "pre-release"
+	defaultContractStatus = "alpha"
 )
 
 // BuildInfo carries local build metadata. It is intentionally local-only:

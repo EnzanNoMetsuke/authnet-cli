@@ -21,7 +21,7 @@ builds:
       - -X main.commit={{ .Commit }}
       - -X main.date={{ .Date }}
       - -X main.schemaVersion=0.1.0
-      - -X main.contractStatus=pre-release
+      - -X main.contractStatus=alpha
 
 archives:
   - id: authnet
