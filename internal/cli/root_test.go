@@ -1007,6 +1007,100 @@ func TestTransactionListResolvesRelativeRangeAndUsesBoundedPagination(t *testing
 	assertNotContains(t, stdout, "secret-key")
 }
 
+func TestTransactionListHumanOutputShowsLocalTimestamp(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	withFixedNow(t, time.Date(2026, 5, 18, 12, 0, 0, 0, time.FixedZone("operator-local", -4*60*60)))
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getSettledBatchListRequest"`,
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"batchList": [{"batchId": 3003, "settlementState": "settledSuccessfully", "settlementTimeUTC": "2026-05-18T03:00:00Z"}]
+			}`,
+		},
+		{
+			Want: `"getTransactionListRequest"`,
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [{
+					"transId": "1234567890",
+					"transactionStatus": "settledSuccessfully",
+					"submitTimeUTC": "2026-05-18T01:02:03Z",
+					"submitTimeLocal": "2026-05-17T21:02:03",
+					"settleAmount": 12.34,
+					"accountType": "Visa",
+					"accountNumber": "XXXX1111"
+				}]
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("transaction", "list", "--last", "7d", "--limit", "1")
+	if err != nil {
+		t.Fatalf("expected transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, "Transaction")
+	assertContains(t, stdout, "Timestamp")
+	assertContains(t, stdout, "Status")
+	assertContainsInOrder(t, stdout, "Transaction", "Timestamp", "Status")
+	assertContains(t, stdout, "1234567890")
+	assertContains(t, stdout, "2026-05-17T21:02:03")
+	assertNotContains(t, stdout, "2026-05-18T01:02:03Z")
+}
+
+func TestTransactionListHumanOutputCanShowUTCTimestamp(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	withFixedNow(t, time.Date(2026, 5, 18, 12, 0, 0, 0, time.FixedZone("operator-local", -4*60*60)))
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getSettledBatchListRequest"`,
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"batchList": [{"batchId": 3003, "settlementState": "settledSuccessfully", "settlementTimeUTC": "2026-05-18T03:00:00Z"}]
+			}`,
+		},
+		{
+			Want: `"getTransactionListRequest"`,
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [{
+					"transId": "1234567890",
+					"transactionStatus": "settledSuccessfully",
+					"submitTimeUTC": "2026-05-18T01:02:03Z",
+					"submitTimeLocal": "2026-05-17T21:02:03",
+					"settleAmount": 12.34,
+					"accountType": "Visa",
+					"accountNumber": "XXXX1111"
+				}]
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("transaction", "list", "--last", "7d", "--limit", "1", "--utc")
+	if err != nil {
+		t.Fatalf("expected transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, "Timestamp")
+	assertContains(t, stdout, "2026-05-18T01:02:03Z")
+	assertNotContains(t, stdout, "2026-05-17T21:02:03")
+}
+
 func TestTransactionListUsesOperatorLocalDateRange(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 	t.Setenv(apiLoginIDEnvName, "secret-login")
@@ -1059,6 +1153,7 @@ func TestTransactionUnsettledListUsesDistinctGatewayRequest(t *testing.T) {
 					"transId": "9001",
 					"transactionStatus": "capturedPendingSettlement",
 					"submitTimeUTC": "2026-05-18T01:02:03Z",
+					"submitTimeLocal": "2026-05-17T21:02:03",
 					"accountType": "MasterCard",
 					"accountNumber": "XXXX2222"
 				}]
@@ -1078,12 +1173,56 @@ func TestTransactionUnsettledListUsesDistinctGatewayRequest(t *testing.T) {
 
 	assertContains(t, stdout, "unsettled transactions: 1")
 	assertContains(t, stdout, "Transaction")
+	assertContains(t, stdout, "Timestamp")
 	assertContains(t, stdout, "Status")
+	assertContainsInOrder(t, stdout, "Transaction", "Timestamp", "Status")
 	assertContains(t, stdout, "Amount")
 	assertContains(t, stdout, "Payment")
 	assertContains(t, stdout, "9001")
+	assertContains(t, stdout, "2026-05-17T21:02:03")
+	assertNotContains(t, stdout, "2026-05-18T01:02:03Z")
 	assertContains(t, stdout, "capturedPendingSettlement")
 	assertContains(t, stdout, "MasterCard XXXX2222")
+}
+
+func TestTransactionUnsettledListCanDisplayUTCTimestamps(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getUnsettledTransactionListRequest"`,
+			AlsoWant: []string{
+				`"limit":1`,
+				`"offset":1`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [{
+					"transId": "9001",
+					"transactionStatus": "capturedPendingSettlement",
+					"submitTimeUTC": "2026-05-18T01:02:03Z",
+					"submitTimeLocal": "2026-05-17T21:02:03",
+					"accountType": "MasterCard",
+					"accountNumber": "XXXX2222"
+				}]
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("transaction", "unsettled", "list", "--limit", "1", "--utc")
+	if err != nil {
+		t.Fatalf("expected unsettled transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, "Timestamp")
+	assertContains(t, stdout, "2026-05-18T01:02:03Z")
+	assertNotContains(t, stdout, "2026-05-17T21:02:03")
 }
 
 func TestTransactionListUsesProductionEndpointForExplicitProductionProfile(t *testing.T) {
@@ -1877,6 +2016,18 @@ func assertNotContains(t *testing.T, text string, unwanted string) {
 	t.Helper()
 	if strings.Contains(text, unwanted) {
 		t.Fatalf("expected output not to contain %q\noutput:\n%s", unwanted, text)
+	}
+}
+
+func assertContainsInOrder(t *testing.T, text string, values ...string) {
+	t.Helper()
+	offset := 0
+	for _, value := range values {
+		index := strings.Index(text[offset:], value)
+		if index < 0 {
+			t.Fatalf("expected output to contain %q after offset %d\noutput:\n%s", value, offset, text)
+		}
+		offset += index + len(value)
 	}
 }
 

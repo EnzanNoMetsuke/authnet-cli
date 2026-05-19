@@ -246,6 +246,7 @@ func newTransactionCommand() *cobra.Command {
 	list.Flags().StringVar(&listOptions.To, "to", "", "range end as YYYY-MM-DD or RFC3339 timestamp")
 	list.Flags().StringVar(&listOptions.Last, "last", defaultTransactionLastRange, "relative range such as 24h, 7d, or 1w")
 	list.Flags().IntVar(&listOptions.Limit, "limit", defaultTransactionListLimit, "maximum transactions to return")
+	list.Flags().BoolVar(&listOptions.UTC, "utc", false, "show transaction timestamps in UTC")
 	transaction.AddCommand(list)
 
 	unsettled := &cobra.Command{
@@ -263,6 +264,7 @@ func newTransactionCommand() *cobra.Command {
 		},
 	}
 	unsettledList.Flags().IntVar(&unsettledOptions.Limit, "limit", defaultTransactionListLimit, "maximum transactions to return")
+	unsettledList.Flags().BoolVar(&unsettledOptions.UTC, "utc", false, "show transaction timestamps in UTC")
 	unsettled.AddCommand(unsettledList)
 	transaction.AddCommand(unsettled)
 
@@ -462,10 +464,12 @@ type transactionListOptions struct {
 	To    string
 	Last  string
 	Limit int
+	UTC   bool
 }
 
 type transactionUnsettledListOptions struct {
 	Limit int
+	UTC   bool
 }
 
 type profileListData struct {
@@ -531,6 +535,7 @@ type transactionListData struct {
 	Transactions              []transactionListItem     `json:"transactions"`
 	GatewayMessageCode        string                    `json:"gateway_message_code,omitempty"`
 	Message                   string                    `json:"message,omitempty"`
+	timestampsInUTC           bool
 }
 
 type transactionListQuery struct {
@@ -774,6 +779,7 @@ func runTransactionList(cmd *cobra.Command, listOptions *transactionListOptions)
 		Transactions:       []transactionListItem{},
 		GatewayMessageCode: message.Code,
 		Message:            message.Text,
+		timestampsInUTC:    listOptions.UTC,
 	}
 	if !strings.EqualFold(batches.Messages.ResultCode, "Ok") {
 		return renderTransactionListFailure(cmd, "transaction list", batches.Messages.ResultCode, data)
@@ -841,6 +847,7 @@ func runTransactionUnsettledList(cmd *cobra.Command, listOptions *transactionUns
 		Transactions:       transactionListItems(response.Transactions, ""),
 		GatewayMessageCode: message.Code,
 		Message:            message.Text,
+		timestampsInUTC:    listOptions.UTC,
 	}
 	if !strings.EqualFold(response.Messages.ResultCode, "Ok") {
 		return renderTransactionListFailure(cmd, "transaction unsettled list", response.Messages.ResultCode, data)
@@ -992,6 +999,7 @@ func renderCustomerProfileListFailure(cmd *cobra.Command, resultCode string, dat
 }
 
 func renderTransactionListResult(cmd *cobra.Command, data transactionListData) error {
+	timestampsInUTC := data.timestampsInUTC
 	data = sanitizeForOutput(data).(transactionListData)
 	return renderResult(cmd, commandResult{
 		Data: data,
@@ -1011,19 +1019,24 @@ func renderTransactionListResult(cmd *cobra.Command, data transactionListData) e
 			}
 			rows := make([][]string, 0, len(data.Transactions))
 			for _, item := range data.Transactions {
+				timestamp := item.SubmitTimeLocal
+				if timestampsInUTC {
+					timestamp = item.SubmitTimeUTC
+				}
 				rows = append(rows, []string{
 					item.TransactionID,
+					firstNonEmpty(timestamp, "(none)"),
 					item.TransactionStatus,
 					firstNonEmpty(item.SettleAmount, "(none)"),
 					strings.TrimSpace(firstNonEmpty(item.Payment.AccountType, "") + " " + firstNonEmpty(item.Payment.AccountNumber, "")),
 				})
 			}
 			for i := range rows {
-				if rows[i][3] == "" {
-					rows[i][3] = "(none)"
+				if rows[i][4] == "" {
+					rows[i][4] = "(none)"
 				}
 			}
-			return writeHumanTable(writer, []string{"Transaction", "Status", "Amount", "Payment"}, rows, colorEnabled(optionsFromCommand(cmd)))
+			return writeHumanTable(writer, []string{"Transaction", "Timestamp", "Status", "Amount", "Payment"}, rows, colorEnabled(optionsFromCommand(cmd)))
 		},
 	})
 }
