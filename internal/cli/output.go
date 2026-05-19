@@ -106,7 +106,8 @@ func renderHumanTable(headers []string, rows [][]string, color bool) string {
 	if len(rows) == 0 {
 		return ""
 	}
-	headerStyle := lipgloss.NewStyle()
+	cellStyle := lipgloss.NewStyle().Padding(0, 1)
+	headerStyle := cellStyle
 	borderStyle := lipgloss.NewStyle()
 	if color {
 		headerStyle = headerStyle.Bold(true).Foreground(lipgloss.Color("39"))
@@ -121,7 +122,7 @@ func renderHumanTable(headers []string, rows [][]string, color bool) string {
 			if row == table.HeaderRow {
 				return headerStyle
 			}
-			return lipgloss.NewStyle()
+			return cellStyle
 		}).
 		String()
 }
