@@ -179,7 +179,7 @@ func writeOutputJSON(writer io.Writer, value any, color bool) error {
 	if err := writeJSON(&buffer, value); err != nil {
 		return err
 	}
-	return quick.Highlight(writer, buffer.String(), "json", "terminal256", "monokai")
+	return quick.Highlight(writer, buffer.String(), "json", "terminal256", "nordic")
 }
 
 func structuredFailure(cmd *cobra.Command, err error) (envelope, ExitCode) {
