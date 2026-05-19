@@ -74,7 +74,7 @@ Current local defaults are controlled by:
 ```make
 VERSION ?= 0.0.0-dev
 SCHEMA_VERSION ?= 0.1.0
-CONTRACT_STATUS ?= pre-release
+CONTRACT_STATUS ?= alpha
 ```
 
 GoReleaser release builds derive `main.version` from the pushed Git tag through
@@ -338,4 +338,3 @@ No formula-to-cask cleanup is required before the first published release if the
     verification notes, and any manual installation checks. Mark any follow-up
     release-attestation work, such as signatures or SBOMs, as post-v1 unless the
     release scope changed.
-

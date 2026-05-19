@@ -66,6 +66,8 @@ Avoid broad production reads. Use bounded pagination and narrow time ranges wher
 
 Never request raw production output. Raw response mode is sandbox-only:
 
+**NOTE:** The current CLI enforces the sandbox-only `--raw-response` safety gate, but command-specific raw gateway response emission has not landed yet.
+
 ```sh
 authnet --automation --raw-response --profile sandbox-main version
 ```

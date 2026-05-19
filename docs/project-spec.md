@@ -76,6 +76,7 @@ Profile names are visible in normal output and JSON envelopes. Documentation mus
 Credentials:
 
 - Humans may use environment variables or secure local storage.
+  - **NOTE:** Current executable gateway commands support environment credential sources. Secure local references can be recorded as profile metadata, but gateway commands cannot read those references yet; use environment credential sources until a concrete secure-storage backend lands.
 - Automation may use environment variables or injected secrets.
 - The CLI must not create plaintext credential storage.
 - Profile config stores non-secret metadata and credential-source references only.
@@ -122,6 +123,7 @@ The CLI does not make a PCI-DSS or other compliance guarantee. It is designed to
 Raw response mode:
 
 - Available only for sandbox-classified profiles.
+  - **NOTE:** The current implementation enforces the sandbox-only `--raw-response` safety gate, but command-specific raw gateway response emission has not landed yet.
 - Explicit only.
 - Never available for production profiles.
 
@@ -452,14 +454,14 @@ True non-goals are capabilities outside the intended product boundary:
 
 Do not list deferred future surfaces as non-goals.
 
-## Open Questions
+## Current Decisions
 
-These should be resolved during implementation planning:
+These decisions reflect the current implementation and should be revised deliberately when behavior changes:
 
-- Exact JSON envelope field names and schema-versioning policy
-- Exact config file format
-- Exact keychain backend/library
-- Exact response-code reference source/update workflow
-- Exact bounded-pagination defaults and maximums
-- Exact profile setup command syntax
-- Exact CI workflow layout for sandbox integration tests
+- Exact JSON envelope field names and schema-versioning policy: the current JSON envelope uses `schema_version`, `command`, optional `profile_name`, optional `environment_classification`, `redacted`, `warnings`, `errors`, and command-specific `data`; the schema version is explicit release metadata, not automatically derived from the CLI version.
+- Exact config file format: profile metadata is stored as `profiles.json` under the resolved `authnet-cli` config directory, with a version number, optional sandbox default profile, profile environment classification, and non-secret credential-source references.
+- Exact keychain backend/library: no keychain backend is implemented yet. Secure local references may be recorded as profile metadata, but gateway commands currently require environment credential sources.
+- Exact response-code reference source/update workflow: `authnet response-code explain` uses the checked-in curated reference in `internal/cli/response_codes.go`; updates follow `docs/response-code-reference.md` and should review the official Authorize.Net response-code sources before changing records.
+- Exact bounded-pagination defaults and maximums: transaction list-style commands default to 25 records and reject limits above 100.
+- Exact profile setup command syntax: `authnet profile setup` accepts `--name`, `--environment`, `--api-login-id-env`, `--transaction-key-env`, `--secure-local-reference`, and `--default`.
+- Exact CI workflow layout for sandbox integration tests: `.github/workflows/sandbox-integration.yml` runs only through manual dispatch or a scheduled opt-in, requires sandbox credential secrets, and skips successfully when explicit enablement or credentials are absent.

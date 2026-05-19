@@ -1,3 +1,5 @@
+> **Historical research note:** This document captures an early planning snapshot and is not an up-to-date source of current project guidance. Use `README.md`, `CONTEXT.md`, `CONTRIBUTING.md`, `docs/project-spec.md`, and the other current docs for normative behavior, command names, release policy, and implementation structure.
+
 Yes — for this project, I’d build the CLI in **Go**.
 
 One important update first: while checking current sources, I found that the official Authorize.Net GitHub org now lists a public `authorize-net-mcp` repo, updated August 21, 2025, with very low visible adoption. I could not fetch its README, so I would not treat it as a mature, widely adopted MCP tool yet, but it does mean the earlier “no MCP at all” premise is now less clean. A CLI-first strategy still makes sense. ([GitHub][1])
