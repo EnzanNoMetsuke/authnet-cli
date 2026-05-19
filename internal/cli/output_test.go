@@ -21,3 +21,22 @@ func TestRenderHumanTablePadsCellsHorizontally(t *testing.T) {
 	assertContains(t, lines[3], " one ")
 	assertContains(t, lines[3], " two ")
 }
+
+func TestRenderHumanTableAlternatesBodyRowsWhenColorEnabled(t *testing.T) {
+	output := renderHumanTable(
+		[]string{"A"},
+		[][]string{{"one"}, {"two"}, {"three"}},
+		true,
+	)
+
+	assertContains(t, output, "\x1b[38;5;250mtwo")
+	assertNotContains(t, output, "\x1b[38;5;250mone")
+	assertNotContains(t, output, "\x1b[38;5;250mthree")
+
+	plainOutput := renderHumanTable(
+		[]string{"A"},
+		[][]string{{"one"}, {"two"}, {"three"}},
+		false,
+	)
+	assertNotContains(t, plainOutput, "\x1b[38;5;250m")
+}
