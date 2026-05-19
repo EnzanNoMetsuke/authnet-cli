@@ -2,3 +2,4 @@
 bin/
 dist/
 .clearance-*
+.DS_Store
