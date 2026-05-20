@@ -891,6 +891,29 @@ func TestAuthTestRawResponseHumanOutputPrintsGatewayResponse(t *testing.T) {
 	assertNotContains(t, stdout, "authentication: ok")
 }
 
+func TestAuthTestRawResponseJSONRejectsInvalidGatewayJSON(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newAuthTestServer(t, http.StatusOK, `{"messages":{"resultCode":"Ok","message":[{"code":"I00001","text":"Successful."}]}}<html>gateway error</html>`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("--json", "--raw-response", "auth", "test")
+	if err == nil {
+		t.Fatal("expected invalid raw gateway JSON to fail")
+	}
+	if code != exitGatewayFailure {
+		t.Fatalf("expected gateway failure exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "gateway_response_invalid"`)
+	assertContains(t, stdout, "Authorize.Net returned an invalid JSON raw gateway response")
+	assertNotContains(t, stdout, "<html>gateway error</html>")
+}
+
 func TestAuthTestUsesProductionEndpointForProductionProfile(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 	t.Setenv(apiLoginIDEnvName, "secret-login")
@@ -3011,6 +3034,23 @@ func TestRawResponseModeRequiresSandboxClassification(t *testing.T) {
 	assertContains(t, stdout, `"environment_classification": "sandbox"`)
 
 	stdout, stderr, code, err := executeCommandWithExit("--json", "--raw-response", "--profile", "prod-main", "version")
+	if err == nil {
+		t.Fatal("expected production raw-response request to fail")
+	}
+	if code != exitSafetyDenied {
+		t.Fatalf("expected safety denied exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "safety_policy_denied"`)
+	assertContains(t, stdout, "raw response mode is unavailable for production-classified profiles")
+}
+
+func TestRawResponseExplicitProductionEnvironmentUsesProductionSpecificSafetyMessage(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(environmentEnvName, environmentProduction)
+	t.Setenv(apiLoginIDEnvName, "dummy-login")
+	t.Setenv(transactionKeyEnvName, "dummy-key")
+
+	stdout, stderr, code, err := executeCommandWithExit("--json", "--raw-response", "auth", "test")
 	if err == nil {
 		t.Fatal("expected production raw-response request to fail")
 	}

@@ -18,6 +18,11 @@ const (
 	rawResponseSupportAnnotation            = "authnet.raw_response"
 )
 
+const (
+	rawResponseProductionSafetyMessage = "raw response mode is unavailable for production-classified profiles"
+	rawResponseSandboxRequiredMessage  = "raw response mode requires a sandbox-classified profile or AUTHNET_ENVIRONMENT=sandbox"
+)
+
 type globalOptions struct {
 	JSON        bool
 	Automation  bool
@@ -230,13 +235,13 @@ func validateGlobalOptions(cmd *cobra.Command, config *cliConfig, options *globa
 		return err
 	}
 	if options.RawResponse && options.Environment == environmentProduction {
-		return newSafetyDeniedError("raw response mode requires a sandbox-classified profile or AUTHNET_ENVIRONMENT=sandbox")
+		return newSafetyDeniedError(rawResponseProductionSafetyMessage)
 	}
 	if options.RawResponse && !commandSupportsRawResponse(cmd) {
 		return newUsageError("raw response mode is not supported for %s", cmd.CommandPath())
 	}
 	if options.RawResponse && options.Environment != environmentSandbox {
-		return newSafetyDeniedError("raw response mode requires a sandbox-classified profile or AUTHNET_ENVIRONMENT=sandbox")
+		return newSafetyDeniedError(rawResponseSandboxRequiredMessage)
 	}
 	return nil
 }

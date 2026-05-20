@@ -419,7 +419,7 @@ func resolveProfileEnvironment(options *globalOptions) error {
 			options.Profile = profile.Name
 			options.Environment = profile.Environment
 			if profile.Environment == environmentProduction && options.RawResponse {
-				return newSafetyDeniedError("raw response mode is unavailable for production-classified profiles")
+				return newSafetyDeniedError(rawResponseProductionSafetyMessage)
 			}
 			return nil
 		}

@@ -714,6 +714,13 @@ func renderRawGatewayResponse(cmd *cobra.Command, rawResponse []byte) error {
 		}
 	}
 	if optionsFromCommand(cmd).JSON {
+		if !json.Valid(trimmed) {
+			return cliError{
+				exitCode: exitGatewayFailure,
+				code:     "gateway_response_invalid",
+				message:  "Authorize.Net returned an invalid JSON raw gateway response",
+			}
+		}
 		return renderResult(cmd, commandResult{
 			Data: rawGatewayResponseData{
 				RawGatewayResponse: json.RawMessage(trimmed),
