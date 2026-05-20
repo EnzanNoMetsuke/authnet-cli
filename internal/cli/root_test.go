@@ -1790,6 +1790,87 @@ func TestLegacyProfilesJSONIsReadAndMigratedOnNextWrite(t *testing.T) {
 	assertNotContains(t, configText, "prod-secret-key")
 }
 
+func TestConfigValidateReportsLegacyProfilesJSONSource(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "sandbox-secret-login")
+	t.Setenv(transactionKeyEnvName, "sandbox-secret-key")
+
+	legacyConfig := `{
+  "version": 1,
+  "default_profile": "sandbox-main",
+  "profiles": [
+    {
+      "name": "sandbox-main",
+      "environment": "sandbox",
+      "credential_source": {
+        "type": "env",
+        "api_login_id_env": "AUTHNET_API_LOGIN_ID",
+        "transaction_key_env": "AUTHNET_TRANSACTION_KEY"
+      }
+    }
+  ]
+}
+`
+	if err := os.WriteFile(filepath.Join(configDir, legacyProfileConfigFileName), []byte(legacyConfig), 0o600); err != nil {
+		t.Fatalf("expected to write legacy profile config fixture: %v", err)
+	}
+
+	stdout, stderr, err := executeCommand("config", "validate")
+	if err != nil {
+		t.Fatalf("expected config validate to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, "profile config: "+filepath.Join(configDir, legacyProfileConfigFileName))
+	assertNotContains(t, stdout, "profile config: "+filepath.Join(configDir, profileConfigFileName))
+	if _, err := os.Stat(filepath.Join(configDir, profileConfigFileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected config validate to avoid creating config.yaml, stat error: %v", err)
+	}
+
+	stdout, stderr, err = executeCommand("--json", "config", "validate")
+	if err != nil {
+		t.Fatalf("expected JSON config validate to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"config_path": "`+filepath.Join(configDir, legacyProfileConfigFileName)+`"`)
+	assertNotContains(t, stdout, `"config_path": "`+filepath.Join(configDir, profileConfigFileName)+`"`)
+	if _, err := os.Stat(filepath.Join(configDir, profileConfigFileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected JSON config validate to avoid creating config.yaml, stat error: %v", err)
+	}
+}
+
+func TestConfigValidateReportsYAMLConfigSource(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "sandbox-secret-login")
+	t.Setenv(transactionKeyEnvName, "sandbox-secret-key")
+
+	configText := `version: 1
+default_profile: sandbox-main
+profiles:
+  - name: sandbox-main
+    environment: sandbox
+    credential_source:
+      type: env
+      api_login_id_env: AUTHNET_API_LOGIN_ID
+      transaction_key_env: AUTHNET_TRANSACTION_KEY
+preferences: {}
+`
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte(configText), 0o600); err != nil {
+		t.Fatalf("expected to write YAML profile config fixture: %v", err)
+	}
+
+	stdout, stderr, err := executeCommand("config", "validate")
+	if err != nil {
+		t.Fatalf("expected config validate to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, "profile config: "+filepath.Join(configDir, profileConfigFileName))
+
+	stdout, stderr, err = executeCommand("--json", "config", "validate")
+	if err != nil {
+		t.Fatalf("expected JSON config validate to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"config_path": "`+filepath.Join(configDir, profileConfigFileName)+`"`)
+}
+
 func TestInteractiveProfileSetupPromptsForMissingValues(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 

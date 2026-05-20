@@ -38,6 +38,11 @@ type profileStore struct {
 	legacyPath string
 }
 
+type loadedProfileFile struct {
+	file profileFile
+	path string
+}
+
 type profileFile struct {
 	Version        int            `json:"version" yaml:"version"`
 	DefaultProfile string         `json:"default_profile,omitempty" yaml:"default_profile,omitempty"`
@@ -85,35 +90,43 @@ func newProfileStore() (profileStore, error) {
 }
 
 func (store profileStore) load() (profileFile, error) {
+	loaded, err := store.loadWithSource()
+	if err != nil {
+		return profileFile{}, err
+	}
+	return loaded.file, nil
+}
+
+func (store profileStore) loadWithSource() (loadedProfileFile, error) {
 	data, err := os.ReadFile(store.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return store.loadLegacy()
+		return store.loadLegacyWithSource()
 	}
 	if err != nil {
-		return profileFile{}, fmt.Errorf("read profile config: %w", err)
+		return loadedProfileFile{}, fmt.Errorf("read profile config: %w", err)
 	}
 
 	var file profileFile
 	if err := yaml.Unmarshal(data, &file); err != nil {
-		return profileFile{}, newUsageError("profile config is not valid YAML: %v", err)
+		return loadedProfileFile{}, newUsageError("profile config is not valid YAML: %v", err)
 	}
-	return normalizeProfileFile(file), nil
+	return loadedProfileFile{file: normalizeProfileFile(file), path: store.path}, nil
 }
 
-func (store profileStore) loadLegacy() (profileFile, error) {
+func (store profileStore) loadLegacyWithSource() (loadedProfileFile, error) {
 	data, err := os.ReadFile(store.legacyPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return newProfileFile(), nil
+		return loadedProfileFile{file: newProfileFile(), path: store.path}, nil
 	}
 	if err != nil {
-		return profileFile{}, fmt.Errorf("read legacy profile config: %w", err)
+		return loadedProfileFile{}, fmt.Errorf("read legacy profile config: %w", err)
 	}
 
 	var file profileFile
 	if err := json.Unmarshal(data, &file); err != nil {
-		return profileFile{}, newUsageError("legacy profile config is not valid JSON: %v", err)
+		return loadedProfileFile{}, newUsageError("legacy profile config is not valid JSON: %v", err)
 	}
-	return normalizeProfileFile(file), nil
+	return loadedProfileFile{file: normalizeProfileFile(file), path: store.legacyPath}, nil
 }
 
 func newProfileFile() profileFile {
