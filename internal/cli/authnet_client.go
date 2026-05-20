@@ -16,6 +16,8 @@ import (
 
 const defaultGatewayTimeout = 15 * time.Second
 
+const transactionKeyMaxLength = 16
+
 var (
 	sandboxAPIEndpoint    = "https://apitest.authorize.net/xml/v1/request.api"
 	productionAPIEndpoint = "https://api.authorize.net/xml/v1/request.api"
@@ -651,6 +653,9 @@ func credentialsForProfile(profile profileEntry, commandName string) (authCreden
 		}
 		if len(missing) > 0 {
 			return authCredentials{}, newUsageError("missing credential environment variables: %s", strings.Join(missing, ", "))
+		}
+		if len(transactionKey) > transactionKeyMaxLength {
+			return authCredentials{}, newUsageError("transaction key from %s is too long: expected at most %d characters", profile.CredentialSource.TransactionKeyEnv, transactionKeyMaxLength)
 		}
 		return authCredentials{
 			APILoginID:     loginID,

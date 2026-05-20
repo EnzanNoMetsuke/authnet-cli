@@ -699,6 +699,65 @@ func TestAuthTestMapsAuthenticationFailure(t *testing.T) {
 	assertNotContains(t, stdout, "secret-key")
 }
 
+func TestAuthTestRejectsOverlengthTransactionKeyBeforeGatewayRequest(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "prod-login")
+	t.Setenv(transactionKeyEnvName, "XXXXXXXXXXXXXXXXX")
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		called = true
+	}))
+	t.Cleanup(server.Close)
+	withGatewayTestEndpoint(t, environmentProduction, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "prod-fake", "--environment", "production")
+	if err != nil {
+		t.Fatalf("expected production profile setup to succeed: %v", err)
+	}
+
+	stdout, stderr, code, err := executeCommandWithExit("--json", "--profile", "prod-fake", "auth", "test")
+	if err == nil {
+		t.Fatal("expected overlength transaction key to fail locally")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if called {
+		t.Fatal("overlength transaction key unexpectedly contacted gateway")
+	}
+	assertContains(t, stdout, `"code": "usage_or_config_error"`)
+	assertContains(t, stdout, "transaction key from AUTHNET_TRANSACTION_KEY is too long")
+	assertContains(t, stdout, "expected at most 16 characters")
+	assertNotContains(t, stdout, "XXXXXXXXXXXXXXXXX")
+}
+
+func TestAuthTestRedactsCredentialEchoesInHumanFailureOutput(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "prod-login")
+	t.Setenv(transactionKeyEnvName, "SECRETKEY1234567")
+	server := newAuthTestServer(t, http.StatusOK, `{
+		"messages": {
+			"resultCode": "Error",
+			"message": [{"code": "E00003", "text": "The 'transactionKey' element is invalid - The value SECRETKEY1234567 is invalid according to its datatype 'String'."}]
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentProduction, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "prod-fake", "--environment", "production")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("--profile", "prod-fake", "auth", "test")
+	if err != nil {
+		t.Fatalf("expected human auth failure to be shell-safe: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	if code != exitSuccess {
+		t.Fatalf("expected human auth failure to return shell-safe success, got %d", code)
+	}
+	assertContains(t, stdout, redactedValue)
+	assertNotContains(t, stdout, "SECRETKEY1234567")
+}
+
 func TestAuthTestReportsConfigurationFailure(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 	t.Setenv(apiLoginIDEnvName, "")
