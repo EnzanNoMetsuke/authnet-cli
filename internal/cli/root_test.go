@@ -51,6 +51,21 @@ func executeCommandWithInput(input string, args ...string) (string, string, Exit
 	return stdout.String(), stderr.String(), code, err
 }
 
+func writeInvalidColorPreferenceConfig(t *testing.T, color string) string {
+	t.Helper()
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	configText := fmt.Sprintf(`version: 1
+profiles: []
+preferences:
+  color: %s
+`, color)
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte(configText), 0o600); err != nil {
+		t.Fatalf("expected to write profile config fixture: %v", err)
+	}
+	return configDir
+}
+
 func TestRootStartsAndShowsHelp(t *testing.T) {
 	stdout, _, err := executeCommand("--help")
 	if err != nil {
@@ -189,6 +204,66 @@ func TestJSONFailuresAreStructuredOnStdout(t *testing.T) {
 	assertContains(t, stdout, `"schema_version": "0.1.0"`)
 	assertContains(t, stdout, `"code": "usage_or_config_error"`)
 	assertContains(t, stdout, `"message": "invalid --color value \"purple\": expected auto, always, or never"`)
+}
+
+func TestInvalidColorPreferenceReportsSourceInAutomationJSON(t *testing.T) {
+	configDir := writeInvalidColorPreferenceConfig(t, "pizza")
+
+	stdout, stderr, code, err := executeCommandWithExit("version", "--automation")
+	if err == nil {
+		t.Fatal("expected invalid color preference to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("expected automation failure stderr to stay empty, got %q", stderr)
+	}
+	assertContains(t, stdout, `"schema_version": "0.1.0"`)
+	assertContains(t, stdout, `"code": "usage_or_config_error"`)
+	assertContains(t, stdout, `preferences.color`)
+	assertContains(t, stdout, filepath.Join(configDir, profileConfigFileName))
+	assertContains(t, stdout, `pizza`)
+	assertNotContains(t, stdout, `invalid --color value`)
+}
+
+func TestInvalidColorPreferenceReportsSourceInJSON(t *testing.T) {
+	configDir := writeInvalidColorPreferenceConfig(t, "pizza")
+
+	stdout, stderr, code, err := executeCommandWithExit("version", "--json")
+	if err == nil {
+		t.Fatal("expected invalid color preference to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("expected JSON failure stderr to stay empty, got %q", stderr)
+	}
+	assertContains(t, stdout, `"code": "usage_or_config_error"`)
+	assertContains(t, stdout, `preferences.color`)
+	assertContains(t, stdout, filepath.Join(configDir, profileConfigFileName))
+	assertContains(t, stdout, `pizza`)
+	assertNotContains(t, stdout, `invalid --color value`)
+}
+
+func TestInvalidColorPreferenceReportsSourceInHumanOutput(t *testing.T) {
+	configDir := writeInvalidColorPreferenceConfig(t, "pizza")
+
+	stdout, stderr, code, err := executeCommandWithExit("version")
+	if err == nil {
+		t.Fatal("expected invalid color preference to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("expected human failure stdout to stay empty, got %q", stdout)
+	}
+	assertContains(t, stderr, `preferences.color`)
+	assertContains(t, stderr, filepath.Join(configDir, profileConfigFileName))
+	assertContains(t, stderr, `"pizza"`)
+	assertNotContains(t, stderr, `invalid --color value`)
 }
 
 func TestSandboxHelpShowsChargeCommands(t *testing.T) {

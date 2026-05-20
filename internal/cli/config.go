@@ -23,7 +23,9 @@ const (
 )
 
 type cliConfig struct {
-	viper *viper.Viper
+	viper               *viper.Viper
+	colorPreferenceSet  bool
+	colorPreferencePath string
 }
 
 func newCLIConfig(flags *pflag.FlagSet) (*cliConfig, error) {
@@ -80,6 +82,8 @@ func (config *cliConfig) applyPreferences() error {
 	}
 	if color, ok := stringPreference(file.Preferences, preferenceKeyColor); ok {
 		config.viper.SetDefault(configKeyColor, color)
+		config.colorPreferenceSet = true
+		config.colorPreferencePath = filepath.Join(dir, profileConfigFileName)
 	}
 	return nil
 }

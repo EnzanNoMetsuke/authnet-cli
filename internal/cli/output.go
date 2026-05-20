@@ -39,6 +39,14 @@ func (err cliError) Error() string {
 	return err.message
 }
 
+type exitingError struct {
+	cliError
+}
+
+func (err exitingError) Unwrap() error {
+	return err.cliError
+}
+
 type renderedError struct {
 	exitCode ExitCode
 	message  string
@@ -215,6 +223,11 @@ func newUsageError(format string, args ...any) error {
 		code:     "usage_or_config_error",
 		message:  message,
 	}
+}
+
+func newExitingUsageError(format string, args ...any) error {
+	appErr := newUsageError(format, args...).(cliError)
+	return exitingError{cliError: appErr}
 }
 
 func colorEnabled(options *globalOptions) bool {

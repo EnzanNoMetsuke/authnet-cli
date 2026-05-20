@@ -88,6 +88,11 @@ func Execute(command *cobra.Command) ExitCode {
 	}
 	options := optionsFromCommand(target)
 	if !options.JSON {
+		var exiting exitingError
+		if errors.As(err, &exiting) {
+			_, _ = target.ErrOrStderr().Write([]byte(err.Error() + "\n"))
+			return exiting.exitCode
+		}
 		var rendered renderedError
 		if !errors.As(err, &rendered) {
 			_, _ = target.ErrOrStderr().Write([]byte(err.Error() + "\n"))
@@ -113,6 +118,9 @@ func Execute(command *cobra.Command) ExitCode {
 
 func validateGlobalOptions(cmd *cobra.Command, config *cliConfig, options *globalOptions) error {
 	config.applyGlobalOptions(options)
+	if options.Automation {
+		options.JSON = true
+	}
 	if options.Environment != "" {
 		if err := validateEnvironment(options.Environment); err != nil {
 			return err
@@ -124,10 +132,9 @@ func validateGlobalOptions(cmd *cobra.Command, config *cliConfig, options *globa
 		if cmd.CommandPath() == "authnet config validate" && !cmd.Root().PersistentFlags().Lookup(configKeyColor).Changed && !isColorEnvironmentOverrideSet() {
 			break
 		}
-		return newUsageError("invalid --color value %q: expected auto, always, or never", options.Color)
+		return invalidColorValueError(cmd, config, options.Color)
 	}
 	if options.Automation {
-		options.JSON = true
 		options.Color = "never"
 		options.NoColor = true
 	}
@@ -141,6 +148,19 @@ func validateGlobalOptions(cmd *cobra.Command, config *cliConfig, options *globa
 		return newSafetyDeniedError("raw response mode requires a sandbox-classified profile or AUTHNET_ENVIRONMENT=sandbox")
 	}
 	return nil
+}
+
+func invalidColorValueError(cmd *cobra.Command, config *cliConfig, color string) error {
+	if cmd.Root().PersistentFlags().Lookup(configKeyColor).Changed {
+		return newUsageError("invalid --color value %q: expected auto, always, or never", color)
+	}
+	if isColorEnvironmentOverrideSet() {
+		return newUsageError("invalid AUTHNET_COLOR value %q: expected auto, always, or never", color)
+	}
+	if config.colorPreferenceSet {
+		return newExitingUsageError("invalid preferences.color value %q in %s: expected auto, always, or never", color, config.colorPreferencePath)
+	}
+	return newUsageError("invalid --color value %q: expected auto, always, or never", color)
 }
 
 func isColorEnvironmentOverrideSet() bool {
