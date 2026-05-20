@@ -56,14 +56,17 @@ Production reads must use an explicit production profile. A default profile may 
 
 ## User Preferences
 
-Non-secret user preferences live in `config.yaml` under the resolved `authnet-cli` config directory shown by `authnet paths`. The first supported preference is default color behavior:
+Non-secret user preferences live in `config.yaml` under the resolved `authnet-cli` config directory shown by `authnet paths`. Supported preferences include default color behavior and transaction list sorting:
 
 ```yaml
 preferences:
   color: auto
+  transaction_list:
+    sort_by: timestamp
+    sort_order: descending
 ```
 
-Supported values are `auto`, `always`, and `never`. Explicit flags such as `--color=always` and `--no-color` override the persisted preference for one invocation. `--automation` always forces JSON output with no color.
+Supported color values are `auto`, `always`, and `never`. Transaction lists support `sort_by` values `timestamp`, `transaction_id`, and `amount`, plus `sort_order` values `ascending` and `descending`. Explicit flags such as `--color=always`, `--no-color`, `--sort-by`, and `--sort-order` override persisted preferences for one invocation. `AUTHNET_TX_SORT_BY` and `AUTHNET_TX_SORT_ORDER` override transaction list preferences when flags are not provided. `--automation` always forces JSON output with no color.
 
 Raw gateway response output is sandbox-only and explicit. Supported commands are:
 

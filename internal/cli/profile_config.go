@@ -178,6 +178,25 @@ func stringPreference(preferences map[string]any, key string) (string, bool) {
 	return strings.TrimSpace(text), true
 }
 
+func nestedStringPreference(preferences map[string]any, keys ...string) (string, bool) {
+	if len(keys) == 0 {
+		return "", false
+	}
+	current := preferences
+	for _, key := range keys[:len(keys)-1] {
+		value, ok := current[key]
+		if !ok {
+			return "", false
+		}
+		next, ok := value.(map[string]any)
+		if !ok {
+			return "", false
+		}
+		current = next
+	}
+	return stringPreference(current, keys[len(keys)-1])
+}
+
 func (store profileStore) save(file profileFile) error {
 	if err := os.MkdirAll(store.dir, 0o700); err != nil {
 		return fmt.Errorf("create profile config directory: %w", err)
@@ -318,15 +337,34 @@ func validateProfileFile(file profileFile) validationResult {
 
 func validatePreferences(result validationResult, preferences map[string]any) validationResult {
 	color, ok := stringPreference(preferences, preferenceKeyColor)
-	if !ok {
-		return result
+	if ok {
+		switch color {
+		case "auto", "always", "never":
+			result.Checks = append(result.Checks, checkRow{"preference color", "passed", "color preference is valid"})
+		default:
+			result.Valid = false
+			result.Checks = append(result.Checks, checkRow{"preference color", "failed", fmt.Sprintf("invalid preference color %q: expected auto, always, or never", color)})
+		}
 	}
-	switch color {
-	case "auto", "always", "never":
-		result.Checks = append(result.Checks, checkRow{"preference color", "passed", "color preference is valid"})
-	default:
-		result.Valid = false
-		result.Checks = append(result.Checks, checkRow{"preference color", "failed", fmt.Sprintf("invalid preference color %q: expected auto, always, or never", color)})
+	sortBy, ok := nestedStringPreference(preferences, "transaction_list", "sort_by")
+	if ok {
+		switch sortBy {
+		case "timestamp", "transaction_id", "amount":
+			result.Checks = append(result.Checks, checkRow{"preference transaction list sort field", "passed", "transaction list sort field preference is valid"})
+		default:
+			result.Valid = false
+			result.Checks = append(result.Checks, checkRow{"preference transaction list sort field", "failed", fmt.Sprintf("invalid preference transaction_list.sort_by %q: expected timestamp, transaction_id, or amount", sortBy)})
+		}
+	}
+	sortOrder, ok := nestedStringPreference(preferences, "transaction_list", "sort_order")
+	if ok {
+		switch sortOrder {
+		case "ascending", "descending":
+			result.Checks = append(result.Checks, checkRow{"preference transaction list sort order", "passed", "transaction list sort order preference is valid"})
+		default:
+			result.Valid = false
+			result.Checks = append(result.Checks, checkRow{"preference transaction list sort order", "failed", fmt.Sprintf("invalid preference transaction_list.sort_order %q: expected ascending or descending", sortOrder)})
+		}
 	}
 	return result
 }

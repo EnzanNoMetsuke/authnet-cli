@@ -14,7 +14,32 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"go.yaml.in/yaml/v3"
 )
+
+func TestMain(m *testing.M) {
+	for _, env := range os.Environ() {
+		name, _, _ := strings.Cut(env, "=")
+		if strings.HasPrefix(name, "AUTHNET_") {
+			_ = os.Unsetenv(name)
+		}
+	}
+
+	configDir, err := os.MkdirTemp("", "authnet-cli-test-config-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "create isolated config directory: %v\n", err)
+		os.Exit(1)
+	}
+	if err := os.Setenv(configEnvName, configDir); err != nil {
+		fmt.Fprintf(os.Stderr, "set isolated config directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	code := m.Run()
+	_ = os.RemoveAll(configDir)
+	os.Exit(code)
+}
 
 func executeCommand(args ...string) (string, string, error) {
 	stdout, stderr, _, err := executeCommandWithInput("", args...)
@@ -39,9 +64,7 @@ func executeCommandWithInput(input string, args ...string) (string, string, Exit
 	command.SetOut(&stdout)
 	command.SetErr(&stderr)
 	command.SetIn(strings.NewReader(input))
-	command.SetArgs(args)
-
-	code := Execute(command)
+	code := ExecuteWithArgs(command, args)
 	var err error
 	if code != exitSuccess {
 		err = cliError{exitCode: code, code: "command_failed", message: strings.TrimSpace(stderr.String())}
@@ -65,6 +88,26 @@ preferences:
 		t.Fatalf("expected to write profile config fixture: %v", err)
 	}
 	return configDir
+}
+
+func writeTransactionSortPreferenceConfig(t *testing.T, configDir string, sortBy string, sortOrder string) {
+	t.Helper()
+	configBytes, err := yaml.Marshal(map[string]any{
+		"version":  profileConfigVersion,
+		"profiles": []profileEntry{},
+		"preferences": map[string]any{
+			"transaction_list": map[string]any{
+				"sort_by":    sortBy,
+				"sort_order": sortOrder,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected to marshal profile config fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), configBytes, 0o600); err != nil {
+		t.Fatalf("expected to write profile config fixture: %v", err)
+	}
 }
 
 func TestRootStartsAndShowsHelp(t *testing.T) {
@@ -1374,6 +1417,460 @@ func TestTransactionListResolvesRelativeRangeAndUsesBoundedPagination(t *testing
 	assertNotContains(t, stdout, "secret-key")
 }
 
+func TestTransactionListDefaultsToTimestampDescendingJSONOrder(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	withFixedNow(t, time.Date(2026, 5, 18, 12, 0, 0, 0, time.FixedZone("operator-local", -4*60*60)))
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getSettledBatchListRequest"`,
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"batchList": [
+					{"batchId": 3003, "settlementState": "settledSuccessfully", "settlementTimeUTC": "2026-05-18T03:00:00Z"},
+					{"batchId": 3004, "settlementState": "settledSuccessfully", "settlementTimeUTC": "2026-05-18T04:00:00Z"}
+				]
+			}`,
+		},
+		{
+			Want:     `"getTransactionListRequest"`,
+			AlsoWant: []string{`"batchId":"3003"`},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "1001", "transactionStatus": "settledSuccessfully", "submitTimeUTC": "2026-05-18T01:00:00Z", "settleAmount": 1.00},
+					{"transId": "1003", "transactionStatus": "settledSuccessfully", "submitTimeUTC": "2026-05-18T03:00:00Z", "settleAmount": 3.00}
+				]
+			}`,
+		},
+		{
+			Want:     `"getTransactionListRequest"`,
+			AlsoWant: []string{`"batchId":"3004"`},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "1002", "transactionStatus": "settledSuccessfully", "submitTimeUTC": "2026-05-18T02:00:00Z", "settleAmount": 2.00}
+				]
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "transaction", "list", "--last", "7d", "--limit", "3")
+	if err != nil {
+		t.Fatalf("expected transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertTransactionIDs(t, stdout, "1003", "1002", "1001")
+}
+
+func TestTransactionListAppliesLimitAfterGlobalSort(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	withFixedNow(t, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getSettledBatchListRequest"`,
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"batchList": [
+					{"batchId": 3003, "settlementState": "settledSuccessfully", "settlementTimeUTC": "2026-05-18T03:00:00Z"},
+					{"batchId": 3004, "settlementState": "settledSuccessfully", "settlementTimeUTC": "2026-05-18T04:00:00Z"}
+				]
+			}`,
+		},
+		{
+			Want: `"getTransactionListRequest"`,
+			AlsoWant: []string{
+				`"batchId":"3003"`,
+				`"limit":2`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "1003", "transactionStatus": "settledSuccessfully", "submitTimeUTC": "2026-05-18T03:00:00Z", "settleAmount": 30.00},
+					{"transId": "1004", "transactionStatus": "settledSuccessfully", "submitTimeUTC": "2026-05-18T04:00:00Z", "settleAmount": 40.00}
+				]
+			}`,
+		},
+		{
+			Want: `"getTransactionListRequest"`,
+			AlsoWant: []string{
+				`"batchId":"3004"`,
+				`"limit":2`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "1001", "transactionStatus": "settledSuccessfully", "submitTimeUTC": "2026-05-18T01:00:00Z", "settleAmount": 10.00},
+					{"transId": "1002", "transactionStatus": "settledSuccessfully", "submitTimeUTC": "2026-05-18T02:00:00Z", "settleAmount": 20.00}
+				]
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "transaction", "list", "--last", "7d", "--limit", "2", "--sort-by", "amount", "--sort-order", "ascending")
+	if err != nil {
+		t.Fatalf("expected transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertTransactionIDs(t, stdout, "1001", "1002")
+	assertContains(t, stdout, `"returned_count": 2`)
+	assertContains(t, stdout, `"has_more": true`)
+}
+
+func TestTransactionUnsettledListAppliesLimitAfterSort(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newUnsettledSortingLimitTestServer(t)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "transaction", "unsettled", "list", "--limit", "3", "--sort-by", "amount", "--sort-order", "ascending")
+	if err != nil {
+		t.Fatalf("expected unsettled transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertTransactionIDs(t, stdout, "9006", "9005", "9004")
+	assertContains(t, stdout, `"returned_count": 3`)
+	assertContains(t, stdout, `"has_more": true`)
+}
+
+func TestTransactionListDateRangeDefaultsToTimestampDescendingJSONOrder(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	withFixedNow(t, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	server := newReportingTestServer(t, settledSortingResponses())
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "transaction", "list", "--last", "", "--from", "2026-05-11", "--to", "2026-05-18", "--limit", "3")
+	if err != nil {
+		t.Fatalf("expected transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertTransactionIDs(t, stdout, "1003", "1002", "1001")
+}
+
+func TestTransactionListSortFlagsOrderHumanRows(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	withFixedNow(t, time.Date(2026, 5, 18, 12, 0, 0, 0, time.FixedZone("operator-local", -4*60*60)))
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getSettledBatchListRequest"`,
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"batchList": [{"batchId": 3003, "settlementState": "settledSuccessfully", "settlementTimeUTC": "2026-05-18T03:00:00Z"}]
+			}`,
+		},
+		{
+			Want: `"getTransactionListRequest"`,
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "1003", "transactionStatus": "settledSuccessfully", "submitTimeLocal": "2026-05-18T03:00:00", "settleAmount": 3.00},
+					{"transId": "1001", "transactionStatus": "settledSuccessfully", "submitTimeLocal": "2026-05-18T01:00:00", "settleAmount": 1.00},
+					{"transId": "1002", "transactionStatus": "settledSuccessfully", "submitTimeLocal": "2026-05-18T02:00:00", "settleAmount": 2.00}
+				]
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("transaction", "list", "--last", "7d", "--limit", "3", "--sort-by", "amount", "--sort-order", "ascending")
+	if err != nil {
+		t.Fatalf("expected transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContainsInOrder(t, stdout, "1001", "1002", "1003")
+}
+
+func TestTransactionSortUsesEnvironmentAndConfigPreferences(t *testing.T) {
+	t.Run("environment", func(t *testing.T) {
+		t.Setenv(configEnvName, t.TempDir())
+		t.Setenv(apiLoginIDEnvName, "secret-login")
+		t.Setenv(transactionKeyEnvName, "secret-key")
+		t.Setenv(transactionSortByEnvName, "transaction_id")
+		t.Setenv(transactionSortOrderEnvName, "ascending")
+		withFixedNow(t, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+		server := newReportingTestServer(t, settledSortingResponses())
+		withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+		_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+		if err != nil {
+			t.Fatalf("expected profile setup to succeed: %v", err)
+		}
+		stdout, stderr, err := executeCommand("--json", "transaction", "list", "--last", "7d", "--limit", "3")
+		if err != nil {
+			t.Fatalf("expected transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+		}
+
+		assertTransactionIDs(t, stdout, "1001", "1002", "1003")
+	})
+
+	t.Run("config", func(t *testing.T) {
+		configDir := t.TempDir()
+		t.Setenv(configEnvName, configDir)
+		t.Setenv(apiLoginIDEnvName, "secret-login")
+		t.Setenv(transactionKeyEnvName, "secret-key")
+		writeTransactionSortPreferenceConfig(t, configDir, "amount", "ascending")
+		withFixedNow(t, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+		server := newReportingTestServer(t, settledSortingResponses())
+		withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+		_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+		if err != nil {
+			t.Fatalf("expected profile setup to succeed: %v", err)
+		}
+		stdout, stderr, err := executeCommand("--json", "transaction", "list", "--last", "7d", "--limit", "3")
+		if err != nil {
+			t.Fatalf("expected transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+		}
+
+		assertTransactionIDs(t, stdout, "1002", "1003", "1001")
+	})
+
+	t.Run("flag precedence", func(t *testing.T) {
+		configDir := t.TempDir()
+		t.Setenv(configEnvName, configDir)
+		t.Setenv(apiLoginIDEnvName, "secret-login")
+		t.Setenv(transactionKeyEnvName, "secret-key")
+		t.Setenv(transactionSortByEnvName, "transaction_id")
+		t.Setenv(transactionSortOrderEnvName, "ascending")
+		writeTransactionSortPreferenceConfig(t, configDir, "amount", "ascending")
+		withFixedNow(t, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+		server := newReportingTestServer(t, settledSortingResponses())
+		withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+		_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+		if err != nil {
+			t.Fatalf("expected profile setup to succeed: %v", err)
+		}
+		stdout, stderr, err := executeCommand("--json", "transaction", "list", "--last", "7d", "--limit", "3", "--sort-by", "timestamp", "--sort-order", "descending")
+		if err != nil {
+			t.Fatalf("expected transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+		}
+
+		assertTransactionIDs(t, stdout, "1003", "1002", "1001")
+	})
+}
+
+func TestTransactionUnsettledListDefaultsToTimestampDescendingJSONOrder(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getUnsettledTransactionListRequest"`,
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "9001", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-18T01:00:00Z"},
+					{"transId": "9003", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-18T03:00:00Z"},
+					{"transId": "9002", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-18T02:00:00Z"}
+				]
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "transaction", "unsettled", "list", "--limit", "3")
+	if err != nil {
+		t.Fatalf("expected unsettled transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertTransactionIDs(t, stdout, "9003", "9002", "9001")
+}
+
+func TestTransactionSortValidationRejectsInvalidSources(t *testing.T) {
+	tests := []struct {
+		name    string
+		setup   func(t *testing.T)
+		args    []string
+		message string
+	}{
+		{
+			name:    "flag sort field",
+			setup:   func(t *testing.T) { t.Setenv(configEnvName, t.TempDir()) },
+			args:    []string{"--json", "transaction", "list", "--last", "7d", "--sort-by", "status"},
+			message: `invalid --sort-by value \"status\": expected timestamp, transaction_id, or amount`,
+		},
+		{
+			name: "environment sort order",
+			setup: func(t *testing.T) {
+				t.Setenv(configEnvName, t.TempDir())
+				t.Setenv(transactionSortOrderEnvName, "sideways")
+			},
+			args:    []string{"--json", "transaction", "list", "--last", "7d"},
+			message: `invalid AUTHNET_TX_SORT_ORDER value \"sideways\": expected ascending or descending`,
+		},
+		{
+			name: "config sort field",
+			setup: func(t *testing.T) {
+				configDir := t.TempDir()
+				t.Setenv(configEnvName, configDir)
+				writeTransactionSortPreferenceConfig(t, configDir, "status", "descending")
+			},
+			args:    []string{"--json", "transaction", "list", "--last", "7d"},
+			message: `preferences.transaction_list.sort_by`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			test.setup(t)
+
+			stdout, _, code, err := executeCommandWithExit(test.args...)
+			if err == nil {
+				t.Fatal("expected invalid transaction sort configuration to fail")
+			}
+			if code != exitUsageOrConfig {
+				t.Fatalf("expected usage/config exit, got %d\nstdout:\n%s", code, stdout)
+			}
+			assertContains(t, stdout, test.message)
+		})
+	}
+}
+
+func TestUnknownFlagRespectsStructuredOutputMode(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		message string
+	}{
+		{
+			name:    "json after unknown flag",
+			args:    []string{"transaction", "unsettled", "list", "--pizza", "--sort-by", "amount", "--sort-order", "ascending", "--json", "--limit", "5"},
+			message: `"message": "unknown flag: --pizza"`,
+		},
+		{
+			name:    "automation after unsupported unsettled date range flag",
+			args:    []string{"transaction", "unsettled", "list", "--last", "7d", "--automation", "--limit", "5"},
+			message: `"message": "no gateway support: --last is incompatible with unsettled transaction list API (no date/time range allowed)"`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv(configEnvName, t.TempDir())
+
+			stdout, stderr, code, err := executeCommandWithExit(test.args...)
+			if err == nil {
+				t.Fatal("expected unknown flag to fail")
+			}
+			if code != exitUsageOrConfig {
+				t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+			}
+			if stderr != "" {
+				t.Fatalf("expected structured output mode to keep stderr empty, got %q", stderr)
+			}
+			assertContains(t, stdout, `"command": "authnet transaction unsettled list"`)
+			assertContains(t, stdout, `"code": "usage_or_config_error"`)
+			assertContains(t, stdout, test.message)
+		})
+	}
+}
+
+func TestUnknownFlagExitsWithUsageErrorInHumanMode(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+
+	stdout, stderr, code, err := executeCommandWithExit("transaction", "unsettled", "list", "--pizza")
+	if err == nil {
+		t.Fatal("expected unknown flag to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("expected human error output to stay on stderr, got stdout:\n%s", stdout)
+	}
+	assertContains(t, stderr, "unknown flag: --pizza")
+}
+
+func TestTransactionSortFallsBackToTransactionIDDescending(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	withFixedNow(t, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getSettledBatchListRequest"`,
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"batchList": [{"batchId": 3003, "settlementState": "settledSuccessfully", "settlementTimeUTC": "2026-05-18T03:00:00Z"}]
+			}`,
+		},
+		{
+			Want: `"getTransactionListRequest"`,
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "1001", "transactionStatus": "settledSuccessfully"},
+					{"transId": "1003", "transactionStatus": "settledSuccessfully"},
+					{"transId": "1002", "transactionStatus": "settledSuccessfully"}
+				]
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "transaction", "list", "--last", "7d", "--limit", "3")
+	if err != nil {
+		t.Fatalf("expected transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertTransactionIDs(t, stdout, "1003", "1002", "1001")
+}
+
+func TestTransactionSortOrdersMissingPrimaryValuesTransitively(t *testing.T) {
+	timestampItems := []transactionListItem{
+		{TransactionID: "1001", SubmitTimeUTC: "2026-05-18T03:00:00Z"},
+		{TransactionID: "1003"},
+		{TransactionID: "1002", SubmitTimeUTC: "2026-05-18T01:00:00Z"},
+	}
+	sortTransactionListItems(timestampItems, transactionSortOptions{By: "timestamp", Order: "descending"})
+	assertTransactionItemIDs(t, timestampItems, "1001", "1002", "1003")
+
+	amountItems := []transactionListItem{
+		{TransactionID: "2001", SettleAmount: "3.00"},
+		{TransactionID: "2003", SettleAmount: "not-a-number"},
+		{TransactionID: "2002", SettleAmount: "1.00"},
+	}
+	sortTransactionListItems(amountItems, transactionSortOptions{By: "amount", Order: "descending"})
+	assertTransactionItemIDs(t, amountItems, "2001", "2002", "2003")
+}
+
 func TestTransactionListHumanOutputShowsLocalTimestamp(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 	t.Setenv(apiLoginIDEnvName, "secret-login")
@@ -1590,6 +2087,29 @@ func TestTransactionUnsettledListCanDisplayUTCTimestamps(t *testing.T) {
 	assertContains(t, stdout, "Timestamp")
 	assertContains(t, stdout, "2026-05-18T01:02:03Z")
 	assertNotContains(t, stdout, "2026-05-17T21:02:03")
+}
+
+func settledSortingResponses() []reportingResponse {
+	return []reportingResponse{
+		{
+			Want: `"getSettledBatchListRequest"`,
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"batchList": [{"batchId": 3003, "settlementState": "settledSuccessfully", "settlementTimeUTC": "2026-05-18T03:00:00Z"}]
+			}`,
+		},
+		{
+			Want: `"getTransactionListRequest"`,
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "1003", "transactionStatus": "settledSuccessfully", "submitTimeUTC": "2026-05-18T03:00:00Z", "settleAmount": 2.00},
+					{"transId": "1001", "transactionStatus": "settledSuccessfully", "submitTimeUTC": "2026-05-18T01:00:00Z", "settleAmount": 3.00},
+					{"transId": "1002", "transactionStatus": "settledSuccessfully", "submitTimeUTC": "2026-05-18T02:00:00Z", "settleAmount": 1.00}
+				]
+			}`,
+		},
+	}
 }
 
 func TestTransactionListUsesProductionEndpointForExplicitProductionProfile(t *testing.T) {
@@ -2007,6 +2527,22 @@ func TestProfileSetupListValidateAndRemove(t *testing.T) {
 		t.Fatalf("expected profile list after remove to succeed: %v", err)
 	}
 	assertNotContains(t, stdout, "prod-main")
+}
+
+func TestConfigValidateChecksTransactionSortPreferences(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	writeTransactionSortPreferenceConfig(t, configDir, "status", "sideways")
+
+	stdout, stderr, code, err := executeCommandWithExit("--json", "config", "validate")
+	if err == nil {
+		t.Fatal("expected config validate to fail for invalid transaction sort preferences")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected config validate usage exit, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `invalid preference transaction_list.sort_by \"status\"`)
+	assertContains(t, stdout, `invalid preference transaction_list.sort_order \"sideways\"`)
 }
 
 func TestProfileSetupWritesUnifiedYAMLConfigWithoutSecrets(t *testing.T) {
@@ -2775,6 +3311,61 @@ func newReportingTestServer(t *testing.T, responses []reportingResponse) *httpte
 	return server
 }
 
+func newUnsettledSortingLimitTestServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			t.Errorf("expected POST request, got %s", request.Method)
+		}
+		if got := request.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("expected JSON content type, got %q", got)
+		}
+		requests++
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		text := string(body)
+		if !strings.Contains(text, `"getUnsettledTransactionListRequest"`) {
+			t.Errorf("expected getUnsettledTransactionListRequest body, got %s", text)
+		}
+
+		responseBody := `{
+			"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+			"transactions": [
+				{"transId": "9006", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-20T15:21:17Z", "settleAmount": 2.00},
+				{"transId": "9002", "transactionStatus": "declined", "submitTimeUTC": "2026-05-20T15:19:41Z", "settleAmount": 5.55},
+				{"transId": "9001", "transactionStatus": "declined", "submitTimeUTC": "2026-05-20T15:19:29Z", "settleAmount": 5.55}
+			]
+		}`
+		if strings.Contains(text, `"limit":100`) {
+			responseBody = `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "9006", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-20T15:21:17Z", "settleAmount": 2.00},
+					{"transId": "9002", "transactionStatus": "declined", "submitTimeUTC": "2026-05-20T15:19:41Z", "settleAmount": 5.55},
+					{"transId": "9001", "transactionStatus": "declined", "submitTimeUTC": "2026-05-20T15:19:29Z", "settleAmount": 5.55},
+					{"transId": "9003", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-20T15:17:34Z", "settleAmount": 4.44},
+					{"transId": "9005", "transactionStatus": "declined", "submitTimeUTC": "2026-05-20T15:17:12Z", "settleAmount": 3.21},
+					{"transId": "9004", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-20T15:16:50Z", "settleAmount": 3.21}
+				]
+			}`
+		}
+
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte(responseBody))
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		if requests != 1 {
+			t.Errorf("expected 1 unsettled transaction request, got %d", requests)
+		}
+	})
+	return server
+}
+
 func withFixedNow(t *testing.T, now time.Time) {
 	t.Helper()
 	original := nowFunc
@@ -2829,6 +3420,48 @@ func assertContainsInOrder(t *testing.T, text string, values ...string) {
 			t.Fatalf("expected output to contain %q after offset %d\noutput:\n%s", value, offset, text)
 		}
 		offset += index + len(value)
+	}
+}
+
+func assertTransactionIDs(t *testing.T, output string, want ...string) {
+	t.Helper()
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(output), &envelope); err != nil {
+		t.Fatalf("expected valid JSON output: %v\noutput:\n%s", err, output)
+	}
+	data, ok := envelope["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected JSON data object in %#v", envelope["data"])
+	}
+	transactions, ok := data["transactions"].([]any)
+	if !ok {
+		t.Fatalf("expected JSON transactions array in %#v", data["transactions"])
+	}
+	got := make([]string, 0, len(transactions))
+	for _, transaction := range transactions {
+		item, ok := transaction.(map[string]any)
+		if !ok {
+			t.Fatalf("expected JSON transaction object, got %#v", transaction)
+		}
+		id, ok := item["transaction_id"].(string)
+		if !ok {
+			t.Fatalf("expected JSON transaction_id string in %#v", item)
+		}
+		got = append(got, id)
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("transaction ID order mismatch\nwant: %v\n got: %v\noutput:\n%s", want, got, output)
+	}
+}
+
+func assertTransactionItemIDs(t *testing.T, items []transactionListItem, want ...string) {
+	t.Helper()
+	got := make([]string, 0, len(items))
+	for _, item := range items {
+		got = append(got, item.TransactionID)
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("transaction ID order mismatch\nwant: %v\n got: %v", want, got)
 	}
 }
 

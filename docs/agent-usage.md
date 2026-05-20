@@ -25,9 +25,19 @@ Use the JSON envelope and exit-code taxonomy for control flow. Do not parse huma
 
 ## Preferences
 
-Durable user preferences are non-secret config only. The supported preference in this release is `preferences.color` in `config.yaml`, with values `auto`, `always`, or `never`.
+Durable user preferences are non-secret config only. Supported preferences in this release are `preferences.color` and nested transaction list sorting preferences in `config.yaml`:
 
-Precedence is: explicit command-line flags, automation safety overrides, environment overrides such as `AUTHNET_COLOR`, durable preferences, then built-in defaults. Automation should still prefer `--automation`; it forces JSON output and no color regardless of persisted preferences.
+```yaml
+preferences:
+  color: auto
+  transaction_list:
+    sort_by: timestamp
+    sort_order: descending
+```
+
+`preferences.color` supports `auto`, `always`, or `never`. `preferences.transaction_list.sort_by` supports `timestamp`, `transaction_id`, or `amount`. `preferences.transaction_list.sort_order` supports `ascending` or `descending`.
+
+Precedence is: explicit command-line flags, automation safety overrides where applicable, environment overrides such as `AUTHNET_COLOR`, `AUTHNET_TX_SORT_BY`, and `AUTHNET_TX_SORT_ORDER`, durable preferences, then built-in defaults. Automation should still prefer `--automation`; it forces JSON output and no color regardless of persisted preferences.
 
 ## Profiles
 
