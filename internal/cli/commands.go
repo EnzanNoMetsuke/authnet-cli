@@ -90,12 +90,13 @@ func newConfigCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			file, err := store.load()
+			loaded, err := store.loadWithSource()
 			if err != nil {
 				return err
 			}
+			file := loaded.file
 			result := validateProfileFile(file)
-			result.ConfigPath = store.path
+			result.ConfigPath = loaded.path
 			warnings := result.Warnings
 			if len(file.Profiles) == 0 {
 				warnings = append(warnings, warning{
@@ -112,7 +113,7 @@ func newConfigCommand() *cobra.Command {
 					if !result.Valid {
 						status = "invalid"
 					}
-					if _, err := fmt.Fprintf(writer, "profile config: %s\nstatus: %s\nprofiles: %d\n", store.path, status, len(file.Profiles)); err != nil {
+					if _, err := fmt.Fprintf(writer, "profile config: %s\nstatus: %s\nprofiles: %d\n", loaded.path, status, len(file.Profiles)); err != nil {
 						return err
 					}
 					rows := make([][]string, 0, len(result.Checks))

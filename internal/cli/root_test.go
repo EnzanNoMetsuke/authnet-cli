@@ -52,6 +52,21 @@ func executeCommandWithInput(input string, args ...string) (string, string, Exit
 	return stdout.String(), stderr.String(), code, err
 }
 
+func writeInvalidColorPreferenceConfig(t *testing.T, color string) string {
+	t.Helper()
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	configText := fmt.Sprintf(`version: 1
+profiles: []
+preferences:
+  color: %s
+`, color)
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte(configText), 0o600); err != nil {
+		t.Fatalf("expected to write profile config fixture: %v", err)
+	}
+	return configDir
+}
+
 func TestRootStartsAndShowsHelp(t *testing.T) {
 	stdout, _, err := executeCommand("--help")
 	if err != nil {
@@ -176,6 +191,22 @@ func TestPathsWarningsRenderForHumanAndJSON(t *testing.T) {
 	assertNotContains(t, stderr, "warning:")
 }
 
+func TestPathsDoesNotRequireValidProfileConfigYAML(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte("profiles: [\n"), 0o600); err != nil {
+		t.Fatalf("expected to write malformed YAML config fixture: %v", err)
+	}
+
+	stdout, stderr, err := executeCommand("paths")
+	if err != nil {
+		t.Fatalf("expected paths command to succeed with malformed profile config: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, "config directory: "+configDir)
+	assertContains(t, stdout, "profile config file: "+filepath.Join(configDir, profileConfigFileName))
+	assertNotContains(t, stderr, "profile config is not valid YAML")
+}
+
 func TestJSONFailuresAreStructuredOnStdout(t *testing.T) {
 	stdout, stderr, code, err := executeCommandWithExit("--json", "--color=purple", "version")
 	if err == nil {
@@ -190,6 +221,130 @@ func TestJSONFailuresAreStructuredOnStdout(t *testing.T) {
 	assertContains(t, stdout, `"schema_version": "0.1.0"`)
 	assertContains(t, stdout, `"code": "usage_or_config_error"`)
 	assertContains(t, stdout, `"message": "invalid --color value \"purple\": expected auto, always, or never"`)
+}
+
+func TestInvalidColorPreferenceReportsSourceInAutomationJSON(t *testing.T) {
+	configDir := writeInvalidColorPreferenceConfig(t, "pizza")
+
+	stdout, stderr, code, err := executeCommandWithExit("version", "--automation")
+	if err == nil {
+		t.Fatal("expected invalid color preference to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("expected automation failure stderr to stay empty, got %q", stderr)
+	}
+	assertContains(t, stdout, `"schema_version": "0.1.0"`)
+	assertContains(t, stdout, `"code": "usage_or_config_error"`)
+	assertContains(t, stdout, `preferences.color`)
+	assertContains(t, stdout, filepath.Join(configDir, profileConfigFileName))
+	assertContains(t, stdout, `pizza`)
+	assertNotContains(t, stdout, `invalid --color value`)
+}
+
+func TestInvalidColorPreferenceReportsSourceInJSON(t *testing.T) {
+	configDir := writeInvalidColorPreferenceConfig(t, "pizza")
+
+	stdout, stderr, code, err := executeCommandWithExit("version", "--json")
+	if err == nil {
+		t.Fatal("expected invalid color preference to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("expected JSON failure stderr to stay empty, got %q", stderr)
+	}
+	assertContains(t, stdout, `"code": "usage_or_config_error"`)
+	assertContains(t, stdout, `preferences.color`)
+	assertContains(t, stdout, filepath.Join(configDir, profileConfigFileName))
+	assertContains(t, stdout, `pizza`)
+	assertNotContains(t, stdout, `invalid --color value`)
+}
+
+func TestInvalidColorPreferenceIgnoresEmptyColorEnvironmentForSource(t *testing.T) {
+	configDir := writeInvalidColorPreferenceConfig(t, "pizza")
+	t.Setenv("AUTHNET_COLOR", "")
+
+	stdout, stderr, code, err := executeCommandWithExit("version", "--json")
+	if err == nil {
+		t.Fatal("expected invalid color preference to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("expected JSON failure stderr to stay empty, got %q", stderr)
+	}
+	assertContains(t, stdout, `preferences.color`)
+	assertContains(t, stdout, filepath.Join(configDir, profileConfigFileName))
+	assertNotContains(t, stdout, `AUTHNET_COLOR`)
+}
+
+func TestInvalidNonStringColorPreferenceReportsConfiguredValue(t *testing.T) {
+	configDir := writeInvalidColorPreferenceConfig(t, "123")
+
+	stdout, stderr, code, err := executeCommandWithExit("version", "--json")
+	if err == nil {
+		t.Fatal("expected invalid color preference to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("expected JSON failure stderr to stay empty, got %q", stderr)
+	}
+	assertContains(t, stdout, `preferences.color`)
+	assertContains(t, stdout, filepath.Join(configDir, profileConfigFileName))
+	assertContains(t, stdout, `\"123\"`)
+	assertNotContains(t, stdout, `value \"\"`)
+}
+
+func TestInvalidColorPreferenceReportsSourceInHumanOutput(t *testing.T) {
+	configDir := writeInvalidColorPreferenceConfig(t, "pizza")
+
+	stdout, stderr, code, err := executeCommandWithExit("version")
+	if err == nil {
+		t.Fatal("expected invalid color preference to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("expected human failure stdout to stay empty, got %q", stdout)
+	}
+	assertContains(t, stderr, `preferences.color`)
+	assertContains(t, stderr, filepath.Join(configDir, profileConfigFileName))
+	assertContains(t, stderr, `"pizza"`)
+	assertNotContains(t, stderr, `invalid --color value`)
+}
+
+func TestNoColorOverridesInvalidColorPreference(t *testing.T) {
+	writeInvalidColorPreferenceConfig(t, "pizza")
+
+	stdout, stderr, code, err := executeCommandWithExit("--no-color", "version")
+	if err != nil {
+		t.Fatalf("expected --no-color to override invalid color preference: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	if code != exitSuccess {
+		t.Fatalf("expected success exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, "authnet 0.1.0-test")
+	assertNotContains(t, stderr, "preferences.color")
+	assertNotContains(t, stdout, "\x1b[")
+}
+
+func TestNoColorDoesNotHideInvalidExplicitColorFlag(t *testing.T) {
+	_, stderr, code, err := executeCommandWithExit("--color=purple", "--no-color", "version")
+	if err != nil {
+		t.Fatalf("expected human invalid explicit color to be shell-safe: %v", err)
+	}
+	if code != exitSuccess {
+		t.Fatalf("expected shell-safe success exit code, got %d", code)
+	}
+	assertContains(t, stderr, `invalid --color value "purple"`)
 }
 
 func TestSandboxHelpShowsChargeCommands(t *testing.T) {
@@ -1647,6 +1802,66 @@ func TestExplicitColorCanApplyToHumanWarningsAndJSON(t *testing.T) {
 	assertContains(t, stripANSI(stdout), `"version": "0.1.0-test"`)
 }
 
+func TestPersistedColorPreferenceAppliesToJSONOutput(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	configText := `version: 1
+profiles: []
+preferences:
+  color: always
+`
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte(configText), 0o600); err != nil {
+		t.Fatalf("expected to write profile config fixture: %v", err)
+	}
+
+	stdout, _, err := executeCommand("--json", "version")
+	if err != nil {
+		t.Fatalf("expected persisted color preference to apply: %v", err)
+	}
+	assertContains(t, stdout, "\x1b[")
+	assertContains(t, stripANSI(stdout), `"version": "0.1.0-test"`)
+}
+
+func TestColorPreferencePrecedenceUsesFlagsEnvironmentConfigAndAutomation(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	configText := `version: 1
+profiles: []
+preferences:
+  color: always
+`
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte(configText), 0o600); err != nil {
+		t.Fatalf("expected to write profile config fixture: %v", err)
+	}
+
+	t.Setenv("AUTHNET_COLOR", "never")
+	stdout, _, err := executeCommand("--json", "version")
+	if err != nil {
+		t.Fatalf("expected environment color override to succeed: %v", err)
+	}
+	assertNotContains(t, stdout, "\x1b[")
+
+	stdout, _, err = executeCommand("--json", "--color=always", "version")
+	if err != nil {
+		t.Fatalf("expected explicit color flag to override environment: %v", err)
+	}
+	assertContains(t, stdout, "\x1b[")
+
+	stdout, _, err = executeCommand("--json", "--color=always", "--no-color", "version")
+	if err != nil {
+		t.Fatalf("expected no-color flag to override color preference: %v", err)
+	}
+	assertNotContains(t, stdout, "\x1b[")
+
+	t.Setenv("AUTHNET_COLOR", "")
+	stdout, _, err = executeCommand("--automation", "version")
+	if err != nil {
+		t.Fatalf("expected automation mode to override color preference: %v", err)
+	}
+	assertNotContains(t, stdout, "\x1b[")
+	assertContains(t, stdout, `"version": "0.1.0-test"`)
+}
+
 func TestProfileSetupListValidateAndRemove(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv(configEnvName, configDir)
@@ -1796,6 +2011,87 @@ func TestLegacyProfilesJSONIsReadAndMigratedOnNextWrite(t *testing.T) {
 	assertNotContains(t, configText, "prod-secret-key")
 }
 
+func TestConfigValidateReportsLegacyProfilesJSONSource(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "sandbox-secret-login")
+	t.Setenv(transactionKeyEnvName, "sandbox-secret-key")
+
+	legacyConfig := `{
+  "version": 1,
+  "default_profile": "sandbox-main",
+  "profiles": [
+    {
+      "name": "sandbox-main",
+      "environment": "sandbox",
+      "credential_source": {
+        "type": "env",
+        "api_login_id_env": "AUTHNET_API_LOGIN_ID",
+        "transaction_key_env": "AUTHNET_TRANSACTION_KEY"
+      }
+    }
+  ]
+}
+`
+	if err := os.WriteFile(filepath.Join(configDir, legacyProfileConfigFileName), []byte(legacyConfig), 0o600); err != nil {
+		t.Fatalf("expected to write legacy profile config fixture: %v", err)
+	}
+
+	stdout, stderr, err := executeCommand("config", "validate")
+	if err != nil {
+		t.Fatalf("expected config validate to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, "profile config: "+filepath.Join(configDir, legacyProfileConfigFileName))
+	assertNotContains(t, stdout, "profile config: "+filepath.Join(configDir, profileConfigFileName))
+	if _, err := os.Stat(filepath.Join(configDir, profileConfigFileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected config validate to avoid creating config.yaml, stat error: %v", err)
+	}
+
+	stdout, stderr, err = executeCommand("--json", "config", "validate")
+	if err != nil {
+		t.Fatalf("expected JSON config validate to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"config_path": "`+filepath.Join(configDir, legacyProfileConfigFileName)+`"`)
+	assertNotContains(t, stdout, `"config_path": "`+filepath.Join(configDir, profileConfigFileName)+`"`)
+	if _, err := os.Stat(filepath.Join(configDir, profileConfigFileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected JSON config validate to avoid creating config.yaml, stat error: %v", err)
+	}
+}
+
+func TestConfigValidateReportsYAMLConfigSource(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "sandbox-secret-login")
+	t.Setenv(transactionKeyEnvName, "sandbox-secret-key")
+
+	configText := `version: 1
+default_profile: sandbox-main
+profiles:
+  - name: sandbox-main
+    environment: sandbox
+    credential_source:
+      type: env
+      api_login_id_env: AUTHNET_API_LOGIN_ID
+      transaction_key_env: AUTHNET_TRANSACTION_KEY
+preferences: {}
+`
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte(configText), 0o600); err != nil {
+		t.Fatalf("expected to write YAML profile config fixture: %v", err)
+	}
+
+	stdout, stderr, err := executeCommand("config", "validate")
+	if err != nil {
+		t.Fatalf("expected config validate to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, "profile config: "+filepath.Join(configDir, profileConfigFileName))
+
+	stdout, stderr, err = executeCommand("--json", "config", "validate")
+	if err != nil {
+		t.Fatalf("expected JSON config validate to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"config_path": "`+filepath.Join(configDir, profileConfigFileName)+`"`)
+}
+
 func TestInteractiveProfileSetupPromptsForMissingValues(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 
@@ -1868,6 +2164,50 @@ func TestConfigValidateReportsMissingCredentialSources(t *testing.T) {
 	}
 	assertContains(t, stdout, `"code": "profile_config_invalid"`)
 	assertContains(t, stdout, "MISSING_LOGIN, MISSING_KEY")
+}
+
+func TestConfigValidateRejectsInvalidColorPreference(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "SENTINEL_LOGIN_VALUE")
+	t.Setenv(transactionKeyEnvName, "SENTINEL_TRANSACTION_KEY")
+	configText := `version: 1
+profiles: []
+preferences:
+  color: purple
+`
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte(configText), 0o600); err != nil {
+		t.Fatalf("expected to write profile config fixture: %v", err)
+	}
+
+	stdout, stderr, code, err := executeCommandWithExit("--json", "config", "validate")
+	if err == nil {
+		t.Fatal("expected config validate to fail for invalid color preference")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "profile_config_invalid"`)
+	assertContains(t, stdout, "invalid preference color")
+	assertNotContains(t, stdout, "SENTINEL_LOGIN_VALUE")
+	assertNotContains(t, stdout, "SENTINEL_TRANSACTION_KEY")
+}
+
+func TestConfigValidateIgnoresEmptyColorEnvironmentForPreferenceValidation(t *testing.T) {
+	configDir := writeInvalidColorPreferenceConfig(t, "123")
+	t.Setenv("AUTHNET_COLOR", "")
+
+	stdout, stderr, code, err := executeCommandWithExit("--json", "config", "validate")
+	if err == nil {
+		t.Fatal("expected config validate to fail for invalid color preference")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "profile_config_invalid"`)
+	assertContains(t, stdout, `invalid preference color \"123\"`)
+	assertContains(t, stdout, filepath.Join(configDir, profileConfigFileName))
+	assertNotContains(t, stdout, "AUTHNET_COLOR")
 }
 
 func TestConfigValidateTreatsWhitespaceOnlyCredentialSourcesAsMissing(t *testing.T) {

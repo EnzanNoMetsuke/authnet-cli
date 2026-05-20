@@ -23,6 +23,12 @@ authnet --automation version
 
 Use the JSON envelope and exit-code taxonomy for control flow. Do not parse human-readable output in automation.
 
+## Preferences
+
+Durable user preferences are non-secret config only. The supported preference in this release is `preferences.color` in `config.yaml`, with values `auto`, `always`, or `never`.
+
+Precedence is: explicit command-line flags, automation safety overrides, environment overrides such as `AUTHNET_COLOR`, durable preferences, then built-in defaults. Automation should still prefer `--automation`; it forces JSON output and no color regardless of persisted preferences.
+
 ## Profiles
 
 Use explicit production profiles:

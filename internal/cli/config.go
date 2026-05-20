@@ -19,10 +19,13 @@ const (
 	configKeyColor       = "color"
 	configKeyNoColor     = "no-color"
 	configKeyConfigDir   = "config-dir"
+	preferenceKeyColor   = "color"
 )
 
 type cliConfig struct {
-	viper *viper.Viper
+	viper               *viper.Viper
+	colorPreferenceSet  bool
+	colorPreferencePath string
 }
 
 func newCLIConfig(flags *pflag.FlagSet) (*cliConfig, error) {
@@ -65,6 +68,23 @@ func newCLIConfig(flags *pflag.FlagSet) (*cliConfig, error) {
 	return config, nil
 }
 
+func (config *cliConfig) applyPreferences() error {
+	dir, err := configDirFromViper(config.viper)
+	if err != nil {
+		return err
+	}
+	file, err := loadPreferencesFile(filepath.Join(dir, profileConfigFileName))
+	if err != nil {
+		return err
+	}
+	if color, ok := stringPreference(file.Preferences, preferenceKeyColor); ok {
+		config.viper.SetDefault(configKeyColor, color)
+		config.colorPreferenceSet = true
+		config.colorPreferencePath = filepath.Join(dir, profileConfigFileName)
+	}
+	return nil
+}
+
 func (config *cliConfig) applyGlobalOptions(options *globalOptions) {
 	options.JSON = config.viper.GetBool(configKeyJSON)
 	options.Automation = config.viper.GetBool(configKeyAutomation)
@@ -80,7 +100,11 @@ func configuredAuthnetConfigDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if override := strings.TrimSpace(config.viper.GetString(configKeyConfigDir)); override != "" {
+	return configDirFromViper(config.viper)
+}
+
+func configDirFromViper(config *viper.Viper) (string, error) {
+	if override := strings.TrimSpace(config.GetString(configKeyConfigDir)); override != "" {
 		return override, nil
 	}
 	configDir, err := os.UserConfigDir()
