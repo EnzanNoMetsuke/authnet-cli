@@ -797,6 +797,33 @@ func TestAuthTestRedactsCredentialEchoesInHumanFailureOutput(t *testing.T) {
 	assertNotContains(t, stdout, "SECRETKEY1234567")
 }
 
+func TestAuthTestRedactsTrimmedCredentialEchoesInJSONFailureOutput(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "prod-login")
+	t.Setenv(transactionKeyEnvName, " SECRETKEY1234567\n")
+	server := newAuthTestServer(t, http.StatusOK, `{
+		"messages": {
+			"resultCode": "Error",
+			"message": [{"code": "E00003", "text": "The 'transactionKey' element is invalid - The value SECRETKEY1234567 is invalid according to its datatype 'String'."}]
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentProduction, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "prod-fake", "--environment", "production")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("--json", "--profile", "prod-fake", "auth", "test")
+	if err == nil {
+		t.Fatal("expected JSON auth failure")
+	}
+	if code != exitAuthFailure {
+		t.Fatalf("expected auth failure exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, redactedValue)
+	assertNotContains(t, stdout, "SECRETKEY1234567")
+}
+
 func TestAuthTestReportsConfigurationFailure(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 	t.Setenv(apiLoginIDEnvName, "")
@@ -1734,6 +1761,26 @@ func TestConfigValidateReportsMissingCredentialSources(t *testing.T) {
 	}
 	assertContains(t, stdout, `"code": "profile_config_invalid"`)
 	assertContains(t, stdout, "MISSING_LOGIN, MISSING_KEY")
+}
+
+func TestConfigValidateTreatsWhitespaceOnlyCredentialSourcesAsMissing(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv("BLANK_LOGIN", " \n\t")
+	t.Setenv("BLANK_KEY", "    ")
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--api-login-id-env", "BLANK_LOGIN", "--transaction-key-env", "BLANK_KEY")
+	if err != nil {
+		t.Fatalf("expected setup with credential references to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("--json", "config", "validate")
+	if err == nil {
+		t.Fatal("expected config validate to fail with whitespace-only credential sources")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "profile_config_invalid"`)
+	assertContains(t, stdout, "BLANK_LOGIN, BLANK_KEY")
 }
 
 func TestConfigValidateHumanInvalidDoesNotFailShell(t *testing.T) {
