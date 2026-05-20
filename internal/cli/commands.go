@@ -854,8 +854,9 @@ func runTransactionUnsettledList(cmd *cobra.Command, listOptions *transactionUns
 	if err != nil {
 		return err
 	}
+	candidateLimit := transactionListCandidateLimit(limit, sortOptions)
 	response, err := client.getUnsettledTransactionList(cmd.Context(), profile.Credentials, gatewayPaging{
-		Limit:  limit,
+		Limit:  candidateLimit,
 		Offset: 1,
 	})
 	if err != nil {
@@ -870,8 +871,6 @@ func runTransactionUnsettledList(cmd *cobra.Command, listOptions *transactionUns
 		Kind:                      "unsettled",
 		Pagination: transactionListPagination{
 			RequestedLimit: limit,
-			ReturnedCount:  len(response.Transactions),
-			HasMore:        len(response.Transactions) >= limit,
 		},
 		Transactions:       transactionListItems(response.Transactions, ""),
 		GatewayMessageCode: message.Code,
@@ -882,6 +881,11 @@ func runTransactionUnsettledList(cmd *cobra.Command, listOptions *transactionUns
 		return renderTransactionListFailure(cmd, "transaction unsettled list", response.Messages.ResultCode, data)
 	}
 	sortTransactionListItems(data.Transactions, sortOptions)
+	data.Pagination.HasMore = len(data.Transactions) > limit || len(response.Transactions) >= candidateLimit
+	if len(data.Transactions) > limit {
+		data.Transactions = data.Transactions[:limit]
+	}
+	data.Pagination.ReturnedCount = len(data.Transactions)
 	return renderTransactionListResult(cmd, data)
 }
 
@@ -1280,6 +1284,13 @@ func normalizedTransactionListLimit(limit int) (int, error) {
 		return 0, newUsageError("--limit must be at most %d", maxTransactionListLimit)
 	}
 	return limit, nil
+}
+
+func transactionListCandidateLimit(limit int, sortOptions transactionSortOptions) int {
+	if sortOptions.By == defaultTransactionSortBy && sortOptions.Order == defaultTransactionSortOrder {
+		return limit
+	}
+	return maxTransactionListLimit
 }
 
 type transactionSortOptions struct {

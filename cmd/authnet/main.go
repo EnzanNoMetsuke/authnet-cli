@@ -16,13 +16,13 @@ var (
 )
 
 func main() {
-	exitCode := cli.Execute(cli.NewRootCommand(cli.BuildInfo{
+	exitCode := cli.ExecuteWithArgs(cli.NewRootCommand(cli.BuildInfo{
 		Version:        version,
 		Commit:         commit,
 		Date:           date,
 		SchemaVersion:  schemaVersion,
 		ContractStatus: contractStatus,
-	}))
+	}), os.Args[1:])
 	if exitCode != 0 {
 		os.Exit(int(exitCode))
 	}

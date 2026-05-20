@@ -64,9 +64,7 @@ func executeCommandWithInput(input string, args ...string) (string, string, Exit
 	command.SetOut(&stdout)
 	command.SetErr(&stderr)
 	command.SetIn(strings.NewReader(input))
-	command.SetArgs(args)
-
-	code := Execute(command)
+	code := ExecuteWithArgs(command, args)
 	var err error
 	if code != exitSuccess {
 		err = cliError{exitCode: code, code: "command_failed", message: strings.TrimSpace(stderr.String())}
@@ -1448,6 +1446,27 @@ func TestTransactionListAppliesLimitAfterGlobalSort(t *testing.T) {
 	assertContains(t, stdout, `"has_more": true`)
 }
 
+func TestTransactionUnsettledListAppliesLimitAfterSort(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newUnsettledSortingLimitTestServer(t)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "transaction", "unsettled", "list", "--limit", "3", "--sort-by", "amount", "--sort-order", "ascending")
+	if err != nil {
+		t.Fatalf("expected unsettled transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertTransactionIDs(t, stdout, "9006", "9005", "9004")
+	assertContains(t, stdout, `"returned_count": 3`)
+	assertContains(t, stdout, `"has_more": true`)
+}
+
 func TestTransactionListDateRangeDefaultsToTimestampDescendingJSONOrder(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 	t.Setenv(apiLoginIDEnvName, "secret-login")
@@ -1655,6 +1674,57 @@ func TestTransactionSortValidationRejectsInvalidSources(t *testing.T) {
 			assertContains(t, stdout, test.message)
 		})
 	}
+}
+
+func TestUnknownFlagRespectsStructuredOutputMode(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "json after unknown flag",
+			args: []string{"transaction", "unsettled", "list", "--pizza", "--sort-by", "amount", "--sort-order", "ascending", "--json", "--limit", "5"},
+		},
+		{
+			name: "automation after unknown flag",
+			args: []string{"transaction", "unsettled", "list", "--last", "7d", "--automation", "--limit", "5"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv(configEnvName, t.TempDir())
+
+			stdout, stderr, code, err := executeCommandWithExit(test.args...)
+			if err == nil {
+				t.Fatal("expected unknown flag to fail")
+			}
+			if code != exitUsageOrConfig {
+				t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+			}
+			if stderr != "" {
+				t.Fatalf("expected structured output mode to keep stderr empty, got %q", stderr)
+			}
+			assertContains(t, stdout, `"command": "authnet transaction unsettled list"`)
+			assertContains(t, stdout, `"code": "usage_or_config_error"`)
+			assertContains(t, stdout, `"message": "unknown flag: --`)
+		})
+	}
+}
+
+func TestUnknownFlagExitsWithUsageErrorInHumanMode(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+
+	stdout, stderr, code, err := executeCommandWithExit("transaction", "unsettled", "list", "--pizza")
+	if err == nil {
+		t.Fatal("expected unknown flag to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("expected human error output to stay on stderr, got stdout:\n%s", stdout)
+	}
+	assertContains(t, stderr, "unknown flag: --pizza")
 }
 
 func TestTransactionSortFallsBackToTransactionIDDescending(t *testing.T) {
@@ -3110,6 +3180,61 @@ func newReportingTestServer(t *testing.T, responses []reportingResponse) *httpte
 		server.Close()
 		if requests != len(responses) {
 			t.Errorf("expected %d reporting requests, got %d", len(responses), requests)
+		}
+	})
+	return server
+}
+
+func newUnsettledSortingLimitTestServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			t.Errorf("expected POST request, got %s", request.Method)
+		}
+		if got := request.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("expected JSON content type, got %q", got)
+		}
+		requests++
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		text := string(body)
+		if !strings.Contains(text, `"getUnsettledTransactionListRequest"`) {
+			t.Errorf("expected getUnsettledTransactionListRequest body, got %s", text)
+		}
+
+		responseBody := `{
+			"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+			"transactions": [
+				{"transId": "9006", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-20T15:21:17Z", "settleAmount": 2.00},
+				{"transId": "9002", "transactionStatus": "declined", "submitTimeUTC": "2026-05-20T15:19:41Z", "settleAmount": 5.55},
+				{"transId": "9001", "transactionStatus": "declined", "submitTimeUTC": "2026-05-20T15:19:29Z", "settleAmount": 5.55}
+			]
+		}`
+		if strings.Contains(text, `"limit":100`) {
+			responseBody = `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "9006", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-20T15:21:17Z", "settleAmount": 2.00},
+					{"transId": "9002", "transactionStatus": "declined", "submitTimeUTC": "2026-05-20T15:19:41Z", "settleAmount": 5.55},
+					{"transId": "9001", "transactionStatus": "declined", "submitTimeUTC": "2026-05-20T15:19:29Z", "settleAmount": 5.55},
+					{"transId": "9003", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-20T15:17:34Z", "settleAmount": 4.44},
+					{"transId": "9005", "transactionStatus": "declined", "submitTimeUTC": "2026-05-20T15:17:12Z", "settleAmount": 3.21},
+					{"transId": "9004", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-20T15:16:50Z", "settleAmount": 3.21}
+				]
+			}`
+		}
+
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte(responseBody))
+	}))
+	t.Cleanup(func() {
+		server.Close()
+		if requests != 1 {
+			t.Errorf("expected 1 unsettled transaction request, got %d", requests)
 		}
 	})
 	return server
