@@ -805,13 +805,10 @@ func runTransactionList(cmd *cobra.Command, listOptions *transactionListOptions)
 		return renderTransactionListFailure(cmd, "transaction list", batches.Messages.ResultCode, data)
 	}
 
+	hasMoreCandidates := false
 	for _, batch := range batches.BatchList {
-		if len(data.Transactions) >= limit {
-			break
-		}
-		remaining := limit - len(data.Transactions)
 		response, err := client.getTransactionList(cmd.Context(), profile.Credentials, batch.BatchID.String(), gatewayPaging{
-			Limit:  remaining,
+			Limit:  limit,
 			Offset: 1,
 		})
 		if err != nil {
@@ -823,11 +820,18 @@ func runTransactionList(cmd *cobra.Command, listOptions *transactionListOptions)
 			data.Message = message.Text
 			return renderTransactionListFailure(cmd, "transaction list", response.Messages.ResultCode, data)
 		}
+		if len(response.Transactions) >= limit {
+			hasMoreCandidates = true
+		}
 		data.Transactions = append(data.Transactions, transactionListItems(response.Transactions, batch.BatchID.String())...)
 	}
 	sortTransactionListItems(data.Transactions, sortOptions)
+	hasMoreCandidates = hasMoreCandidates || len(data.Transactions) > limit
+	if len(data.Transactions) > limit {
+		data.Transactions = data.Transactions[:limit]
+	}
 	data.Pagination.ReturnedCount = len(data.Transactions)
-	data.Pagination.HasMore = len(data.Transactions) >= limit && len(data.Transactions) < transactionListPossibleCount(batches.BatchList)
+	data.Pagination.HasMore = hasMoreCandidates
 	return renderTransactionListResult(cmd, data)
 }
 
@@ -1210,10 +1214,6 @@ func transactionListItems(transactions []gatewayTransaction, batchID string) []t
 		})
 	}
 	return items
-}
-
-func transactionListPossibleCount(batches []gatewayBatch) int {
-	return len(batches) * maxTransactionListLimit
 }
 
 func (data customerProfileLookupData) withCustomerProfile(profile gatewayCustomerProfile, options *customerProfileGetOptions) customerProfileLookupData {

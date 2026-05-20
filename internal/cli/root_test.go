@@ -1387,6 +1387,67 @@ func TestTransactionListDefaultsToTimestampDescendingJSONOrder(t *testing.T) {
 	assertTransactionIDs(t, stdout, "1003", "1002", "1001")
 }
 
+func TestTransactionListAppliesLimitAfterGlobalSort(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	withFixedNow(t, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getSettledBatchListRequest"`,
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"batchList": [
+					{"batchId": 3003, "settlementState": "settledSuccessfully", "settlementTimeUTC": "2026-05-18T03:00:00Z"},
+					{"batchId": 3004, "settlementState": "settledSuccessfully", "settlementTimeUTC": "2026-05-18T04:00:00Z"}
+				]
+			}`,
+		},
+		{
+			Want: `"getTransactionListRequest"`,
+			AlsoWant: []string{
+				`"batchId":"3003"`,
+				`"limit":2`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "1003", "transactionStatus": "settledSuccessfully", "submitTimeUTC": "2026-05-18T03:00:00Z", "settleAmount": 30.00},
+					{"transId": "1004", "transactionStatus": "settledSuccessfully", "submitTimeUTC": "2026-05-18T04:00:00Z", "settleAmount": 40.00}
+				]
+			}`,
+		},
+		{
+			Want: `"getTransactionListRequest"`,
+			AlsoWant: []string{
+				`"batchId":"3004"`,
+				`"limit":2`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "1001", "transactionStatus": "settledSuccessfully", "submitTimeUTC": "2026-05-18T01:00:00Z", "settleAmount": 10.00},
+					{"transId": "1002", "transactionStatus": "settledSuccessfully", "submitTimeUTC": "2026-05-18T02:00:00Z", "settleAmount": 20.00}
+				]
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "transaction", "list", "--last", "7d", "--limit", "2", "--sort-by", "amount", "--sort-order", "ascending")
+	if err != nil {
+		t.Fatalf("expected transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertTransactionIDs(t, stdout, "1001", "1002")
+	assertContains(t, stdout, `"returned_count": 2`)
+	assertContains(t, stdout, `"has_more": true`)
+}
+
 func TestTransactionListDateRangeDefaultsToTimestampDescendingJSONOrder(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 	t.Setenv(apiLoginIDEnvName, "secret-login")
