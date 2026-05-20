@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"go.yaml.in/yaml/v3"
 )
 
 func TestMain(m *testing.M) {
@@ -92,14 +94,20 @@ preferences:
 
 func writeTransactionSortPreferenceConfig(t *testing.T, configDir string, sortBy string, sortOrder string) {
 	t.Helper()
-	configText := fmt.Sprintf(`version: 1
-profiles: []
-preferences:
-  transaction_list:
-    sort_by: %s
-    sort_order: %s
-`, sortBy, sortOrder)
-	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte(configText), 0o600); err != nil {
+	configBytes, err := yaml.Marshal(map[string]any{
+		"version":  profileConfigVersion,
+		"profiles": []profileEntry{},
+		"preferences": map[string]any{
+			"transaction_list": map[string]any{
+				"sort_by":    sortBy,
+				"sort_order": sortOrder,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected to marshal profile config fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), configBytes, 0o600); err != nil {
 		t.Fatalf("expected to write profile config fixture: %v", err)
 	}
 }
@@ -1627,6 +1635,24 @@ func TestTransactionSortFallsBackToTransactionIDDescending(t *testing.T) {
 	assertTransactionIDs(t, stdout, "1003", "1002", "1001")
 }
 
+func TestTransactionSortOrdersMissingPrimaryValuesTransitively(t *testing.T) {
+	timestampItems := []transactionListItem{
+		{TransactionID: "1001", SubmitTimeUTC: "2026-05-18T03:00:00Z"},
+		{TransactionID: "1003"},
+		{TransactionID: "1002", SubmitTimeUTC: "2026-05-18T01:00:00Z"},
+	}
+	sortTransactionListItems(timestampItems, transactionSortOptions{By: "timestamp", Order: "descending"})
+	assertTransactionItemIDs(t, timestampItems, "1001", "1002", "1003")
+
+	amountItems := []transactionListItem{
+		{TransactionID: "2001", SettleAmount: "3.00"},
+		{TransactionID: "2003", SettleAmount: "not-a-number"},
+		{TransactionID: "2002", SettleAmount: "1.00"},
+	}
+	sortTransactionListItems(amountItems, transactionSortOptions{By: "amount", Order: "descending"})
+	assertTransactionItemIDs(t, amountItems, "2001", "2002", "2003")
+}
+
 func TestTransactionListHumanOutputShowsLocalTimestamp(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 	t.Setenv(apiLoginIDEnvName, "secret-login")
@@ -3113,6 +3139,17 @@ func assertTransactionIDs(t *testing.T, output string, want ...string) {
 	}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("transaction ID order mismatch\nwant: %v\n got: %v\noutput:\n%s", want, got, output)
+	}
+}
+
+func assertTransactionItemIDs(t *testing.T, items []transactionListItem, want ...string) {
+	t.Helper()
+	got := make([]string, 0, len(items))
+	for _, item := range items {
+		got = append(got, item.TransactionID)
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("transaction ID order mismatch\nwant: %v\n got: %v", want, got)
 	}
 }
 

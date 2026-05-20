@@ -1287,12 +1287,31 @@ type transactionSortOptions struct {
 	Order string
 }
 
+type transactionSortPreferences struct {
+	SortBy          string
+	SortBySource    string
+	SortOrder       string
+	SortOrderSource string
+}
+
 func resolveTransactionSortOptions(cmd *cobra.Command, sortBy string, sortOrder string) (transactionSortOptions, error) {
-	sortBy, sortBySource, err := resolveTransactionSortValue(cmd, "sort-by", sortBy, transactionSortByEnvName, defaultTransactionSortBy)
+	var preferences transactionSortPreferences
+	preferencesLoaded := false
+	loadPreferences := func() (transactionSortPreferences, error) {
+		if preferencesLoaded {
+			return preferences, nil
+		}
+		var err error
+		preferences, err = loadTransactionSortPreferences()
+		preferencesLoaded = true
+		return preferences, err
+	}
+
+	sortBy, sortBySource, err := resolveTransactionSortValue(cmd, "sort-by", sortBy, transactionSortByEnvName, defaultTransactionSortBy, loadPreferences)
 	if err != nil {
 		return transactionSortOptions{}, err
 	}
-	sortOrder, sortOrderSource, err := resolveTransactionSortValue(cmd, "sort-order", sortOrder, transactionSortOrderEnvName, defaultTransactionSortOrder)
+	sortOrder, sortOrderSource, err := resolveTransactionSortValue(cmd, "sort-order", sortOrder, transactionSortOrderEnvName, defaultTransactionSortOrder, loadPreferences)
 	if err != nil {
 		return transactionSortOptions{}, err
 	}
@@ -1313,42 +1332,50 @@ func resolveTransactionSortOptions(cmd *cobra.Command, sortBy string, sortOrder 
 	return options, nil
 }
 
-func resolveTransactionSortValue(cmd *cobra.Command, flagName string, flagValue string, envName string, defaultValue string) (string, string, error) {
+func resolveTransactionSortValue(cmd *cobra.Command, flagName string, flagValue string, envName string, defaultValue string, loadPreferences func() (transactionSortPreferences, error)) (string, string, error) {
 	if cmd.Flags().Lookup(flagName).Changed {
 		return strings.TrimSpace(flagValue), "--" + flagName, nil
 	}
 	if envValue := strings.TrimSpace(os.Getenv(envName)); envValue != "" {
 		return envValue, envName, nil
 	}
-	preference, preferencePath, err := transactionSortPreference(flagName)
+	preferences, err := loadPreferences()
 	if err != nil {
 		return "", "", err
 	}
-	if preference != "" {
-		return preference, preferencePath, nil
+	switch flagName {
+	case "sort-order":
+		if preferences.SortOrder != "" {
+			return preferences.SortOrder, preferences.SortOrderSource, nil
+		}
+	default:
+		if preferences.SortBy != "" {
+			return preferences.SortBy, preferences.SortBySource, nil
+		}
 	}
 	return defaultValue, "default", nil
 }
 
-func transactionSortPreference(flagName string) (string, string, error) {
+func loadTransactionSortPreferences() (transactionSortPreferences, error) {
 	dir, err := authnetConfigDir()
 	if err != nil {
-		return "", "", err
+		return transactionSortPreferences{}, err
 	}
 	configPath := filepath.Join(dir, profileConfigFileName)
 	file, err := loadPreferencesFile(configPath)
 	if err != nil {
-		return "", "", err
+		return transactionSortPreferences{}, err
 	}
-	preferenceKey := "sort_by"
-	if flagName == "sort-order" {
-		preferenceKey = "sort_order"
+	preferences := transactionSortPreferences{}
+	if value, ok := nestedStringPreference(file.Preferences, "transaction_list", "sort_by"); ok {
+		preferences.SortBy = value
+		preferences.SortBySource = "preferences.transaction_list.sort_by in " + configPath
 	}
-	value, ok := nestedStringPreference(file.Preferences, "transaction_list", preferenceKey)
-	if !ok {
-		return "", "", nil
+	if value, ok := nestedStringPreference(file.Preferences, "transaction_list", "sort_order"); ok {
+		preferences.SortOrder = value
+		preferences.SortOrderSource = "preferences.transaction_list.sort_order in " + configPath
 	}
-	return value, "preferences.transaction_list." + preferenceKey + " in " + configPath, nil
+	return preferences, nil
 }
 
 func invalidTransactionSortByError(value string, source string) error {
@@ -1407,9 +1434,9 @@ func compareOptionalTime(left string, right string) int {
 	case !leftOK && !rightOK:
 		return 0
 	case !leftOK:
-		return 0
+		return -1
 	case !rightOK:
-		return 0
+		return 1
 	case leftTime.Before(rightTime):
 		return -1
 	case leftTime.After(rightTime):
@@ -1439,9 +1466,9 @@ func compareOptionalFloat(left string, right string) int {
 	case !leftOK && !rightOK:
 		return 0
 	case !leftOK:
-		return 0
+		return -1
 	case !rightOK:
-		return 0
+		return 1
 	case leftAmount < rightAmount:
 		return -1
 	case leftAmount > rightAmount:
