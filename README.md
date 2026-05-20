@@ -54,6 +54,17 @@ authnet completion ...
 
 Production reads must use an explicit production profile. A default profile may exist only for sandbox-classified profiles.
 
+## User Preferences
+
+Non-secret user preferences live in `config.yaml` under the resolved `authnet-cli` config directory shown by `authnet paths`. The first supported preference is default color behavior:
+
+```yaml
+preferences:
+  color: auto
+```
+
+Supported values are `auto`, `always`, and `never`. Explicit flags such as `--color=always` and `--no-color` override the persisted preference for one invocation. `--automation` always forces JSON output with no color.
+
 Sandbox charge helpers are sandbox-only and use test-card aliases instead of raw card-number entry:
 
 ```sh

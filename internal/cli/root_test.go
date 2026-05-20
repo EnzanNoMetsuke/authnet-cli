@@ -1581,6 +1581,66 @@ func TestExplicitColorCanApplyToHumanWarningsAndJSON(t *testing.T) {
 	assertContains(t, stripANSI(stdout), `"version": "0.1.0-test"`)
 }
 
+func TestPersistedColorPreferenceAppliesToJSONOutput(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	configText := `version: 1
+profiles: []
+preferences:
+  color: always
+`
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte(configText), 0o600); err != nil {
+		t.Fatalf("expected to write profile config fixture: %v", err)
+	}
+
+	stdout, _, err := executeCommand("--json", "version")
+	if err != nil {
+		t.Fatalf("expected persisted color preference to apply: %v", err)
+	}
+	assertContains(t, stdout, "\x1b[")
+	assertContains(t, stripANSI(stdout), `"version": "0.1.0-test"`)
+}
+
+func TestColorPreferencePrecedenceUsesFlagsEnvironmentConfigAndAutomation(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	configText := `version: 1
+profiles: []
+preferences:
+  color: always
+`
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte(configText), 0o600); err != nil {
+		t.Fatalf("expected to write profile config fixture: %v", err)
+	}
+
+	t.Setenv("AUTHNET_COLOR", "never")
+	stdout, _, err := executeCommand("--json", "version")
+	if err != nil {
+		t.Fatalf("expected environment color override to succeed: %v", err)
+	}
+	assertNotContains(t, stdout, "\x1b[")
+
+	stdout, _, err = executeCommand("--json", "--color=always", "version")
+	if err != nil {
+		t.Fatalf("expected explicit color flag to override environment: %v", err)
+	}
+	assertContains(t, stdout, "\x1b[")
+
+	stdout, _, err = executeCommand("--json", "--color=always", "--no-color", "version")
+	if err != nil {
+		t.Fatalf("expected no-color flag to override color preference: %v", err)
+	}
+	assertNotContains(t, stdout, "\x1b[")
+
+	t.Setenv("AUTHNET_COLOR", "")
+	stdout, _, err = executeCommand("--automation", "version")
+	if err != nil {
+		t.Fatalf("expected automation mode to override color preference: %v", err)
+	}
+	assertNotContains(t, stdout, "\x1b[")
+	assertContains(t, stdout, `"version": "0.1.0-test"`)
+}
+
 func TestProfileSetupListValidateAndRemove(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv(configEnvName, configDir)
@@ -1802,6 +1862,33 @@ func TestConfigValidateReportsMissingCredentialSources(t *testing.T) {
 	}
 	assertContains(t, stdout, `"code": "profile_config_invalid"`)
 	assertContains(t, stdout, "MISSING_LOGIN, MISSING_KEY")
+}
+
+func TestConfigValidateRejectsInvalidColorPreference(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "SENTINEL_LOGIN_VALUE")
+	t.Setenv(transactionKeyEnvName, "SENTINEL_TRANSACTION_KEY")
+	configText := `version: 1
+profiles: []
+preferences:
+  color: purple
+`
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte(configText), 0o600); err != nil {
+		t.Fatalf("expected to write profile config fixture: %v", err)
+	}
+
+	stdout, stderr, code, err := executeCommandWithExit("--json", "config", "validate")
+	if err == nil {
+		t.Fatal("expected config validate to fail for invalid color preference")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "profile_config_invalid"`)
+	assertContains(t, stdout, "invalid preference color")
+	assertNotContains(t, stdout, "SENTINEL_LOGIN_VALUE")
+	assertNotContains(t, stdout, "SENTINEL_TRANSACTION_KEY")
 }
 
 func TestConfigValidateHumanInvalidDoesNotFailShell(t *testing.T) {

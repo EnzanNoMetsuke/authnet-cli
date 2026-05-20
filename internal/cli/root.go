@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -55,8 +56,8 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 			return err
 		}
 	} else {
-		root.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
-			return validateGlobalOptions(config, options)
+		root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+			return validateGlobalOptions(cmd, config, options)
 		}
 	}
 
@@ -110,7 +111,7 @@ func Execute(command *cobra.Command) ExitCode {
 	return exitCodeForError(err)
 }
 
-func validateGlobalOptions(config *cliConfig, options *globalOptions) error {
+func validateGlobalOptions(cmd *cobra.Command, config *cliConfig, options *globalOptions) error {
 	config.applyGlobalOptions(options)
 	if options.Environment != "" {
 		if err := validateEnvironment(options.Environment); err != nil {
@@ -120,6 +121,9 @@ func validateGlobalOptions(config *cliConfig, options *globalOptions) error {
 	switch options.Color {
 	case "auto", "always", "never":
 	default:
+		if cmd.CommandPath() == "authnet config validate" && !cmd.Root().PersistentFlags().Lookup(configKeyColor).Changed && !isColorEnvironmentOverrideSet() {
+			break
+		}
 		return newUsageError("invalid --color value %q: expected auto, always, or never", options.Color)
 	}
 	if options.Automation {
@@ -137,6 +141,11 @@ func validateGlobalOptions(config *cliConfig, options *globalOptions) error {
 		return newSafetyDeniedError("raw response mode requires a sandbox-classified profile or AUTHNET_ENVIRONMENT=sandbox")
 	}
 	return nil
+}
+
+func isColorEnvironmentOverrideSet() bool {
+	_, ok := os.LookupEnv("AUTHNET_COLOR")
+	return ok
 }
 
 func optionsFromCommand(cmd *cobra.Command) *globalOptions {

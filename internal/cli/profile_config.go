@@ -137,6 +137,34 @@ func normalizeProfileFile(file profileFile) profileFile {
 	return file
 }
 
+func loadPreferencesFile(path string) (profileFile, error) {
+	data, err := os.ReadFile(path) // #nosec G304 - path is the resolved CLI-controlled config file path.
+	if errors.Is(err, os.ErrNotExist) {
+		return newProfileFile(), nil
+	}
+	if err != nil {
+		return profileFile{}, fmt.Errorf("read profile config preferences: %w", err)
+	}
+
+	var file profileFile
+	if err := yaml.Unmarshal(data, &file); err != nil {
+		return profileFile{}, newUsageError("profile config is not valid YAML: %v", err)
+	}
+	return normalizeProfileFile(file), nil
+}
+
+func stringPreference(preferences map[string]any, key string) (string, bool) {
+	value, ok := preferences[key]
+	if !ok {
+		return "", false
+	}
+	text, ok := value.(string)
+	if !ok {
+		return "", true
+	}
+	return strings.TrimSpace(text), true
+}
+
 func (store profileStore) save(file profileFile) error {
 	if err := os.MkdirAll(store.dir, 0o700); err != nil {
 		return fmt.Errorf("create profile config directory: %w", err)
@@ -241,6 +269,7 @@ func validateProfileFile(file profileFile) validationResult {
 		Profiles: []string{},
 		Checks:   []checkRow{},
 	}
+	result = validatePreferences(result, file.Preferences)
 	names := map[string]bool{}
 	defaultExists := file.DefaultProfile == ""
 
@@ -271,6 +300,21 @@ func validateProfileFile(file profileFile) validationResult {
 		result.Checks = append(result.Checks, checkRow{"default profile", "failed", "default profile does not exist"})
 	}
 	sort.Strings(result.Profiles)
+	return result
+}
+
+func validatePreferences(result validationResult, preferences map[string]any) validationResult {
+	color, ok := stringPreference(preferences, preferenceKeyColor)
+	if !ok {
+		return result
+	}
+	switch color {
+	case "auto", "always", "never":
+		result.Checks = append(result.Checks, checkRow{"preference color", "passed", "color preference is valid"})
+	default:
+		result.Valid = false
+		result.Checks = append(result.Checks, checkRow{"preference color", "failed", "invalid preference color: expected auto, always, or never"})
+	}
 	return result
 }
 
