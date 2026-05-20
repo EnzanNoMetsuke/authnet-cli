@@ -642,8 +642,8 @@ func loadSelectedProfileWithCredentials(options *globalOptions, commandName stri
 func credentialsForProfile(profile profileEntry, commandName string) (authCredentials, error) {
 	switch profile.CredentialSource.Type {
 	case credentialSourceEnv:
-		loginID := configuredEnvironmentValue(profile.CredentialSource.APILoginIDEnv)
-		transactionKey := configuredEnvironmentValue(profile.CredentialSource.TransactionKeyEnv)
+		loginID := strings.TrimSpace(configuredEnvironmentValue(profile.CredentialSource.APILoginIDEnv))
+		transactionKey := strings.TrimSpace(configuredEnvironmentValue(profile.CredentialSource.TransactionKeyEnv))
 		missing := []string{}
 		if loginID == "" {
 			missing = append(missing, profile.CredentialSource.APILoginIDEnv)
