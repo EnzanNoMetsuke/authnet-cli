@@ -79,6 +79,7 @@ func sanitizeString(text string) string {
 
 func sensitiveEnvironmentValues() []string {
 	values := []string{}
+	seen := map[string]struct{}{}
 	for _, item := range os.Environ() {
 		name, value, ok := strings.Cut(item, "=")
 		if !ok || len(value) < 4 {
@@ -89,7 +90,16 @@ func sensitiveEnvironmentValues() []string {
 			strings.Contains(upperName, "KEY") ||
 			strings.Contains(upperName, "SECRET") ||
 			strings.Contains(upperName, "TOKEN") {
-			values = append(values, value)
+			for _, candidate := range []string{value, strings.TrimSpace(value)} {
+				if len(candidate) < 4 {
+					continue
+				}
+				if _, exists := seen[candidate]; exists {
+					continue
+				}
+				seen[candidate] = struct{}{}
+				values = append(values, candidate)
+			}
 		}
 	}
 	return values

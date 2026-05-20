@@ -336,8 +336,8 @@ func validateCredentialAvailability(result validationResult, profile profileEntr
 		result.Checks = append(result.Checks, checkRow{"credential source " + profile.Name, "passed", "secure local credential reference is configured"})
 		return result
 	}
-	loginPresent := configuredEnvironmentValue(profile.CredentialSource.APILoginIDEnv) != ""
-	keyPresent := configuredEnvironmentValue(profile.CredentialSource.TransactionKeyEnv) != ""
+	loginPresent := strings.TrimSpace(configuredEnvironmentValue(profile.CredentialSource.APILoginIDEnv)) != ""
+	keyPresent := strings.TrimSpace(configuredEnvironmentValue(profile.CredentialSource.TransactionKeyEnv)) != ""
 	if loginPresent && keyPresent {
 		result.Checks = append(result.Checks, checkRow{"credential source " + profile.Name, "passed", "credential environment variables are available"})
 		return result
