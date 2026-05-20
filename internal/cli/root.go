@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -78,6 +79,17 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 
 // Execute runs the root command and returns the mapped process exit code.
 func Execute(command *cobra.Command) ExitCode {
+	return execute(command)
+}
+
+// ExecuteWithArgs runs the root command with explicit raw arguments.
+func ExecuteWithArgs(command *cobra.Command, args []string) ExitCode {
+	command.SetArgs(args)
+	applyOutputModeFromRawArgs(optionsFromCommand(command), args)
+	return execute(command)
+}
+
+func execute(command *cobra.Command) ExitCode {
 	executed, err := command.ExecuteC()
 	if err == nil {
 		return exitSuccess
@@ -87,6 +99,7 @@ func Execute(command *cobra.Command) ExitCode {
 	if target == nil {
 		target = command
 	}
+	err = normalizeCommandError(target, err)
 	options := optionsFromCommand(target)
 	if !options.JSON {
 		var exiting exitingError
@@ -115,6 +128,67 @@ func Execute(command *cobra.Command) ExitCode {
 	}
 
 	return exitCodeForError(err)
+}
+
+func applyOutputModeFromRawArgs(options *globalOptions, args []string) {
+	for _, arg := range args {
+		if arg == "--json" {
+			options.JSON = true
+			continue
+		}
+		if value, ok := strings.CutPrefix(arg, "--json="); ok {
+			if parsed, err := strconv.ParseBool(value); err == nil && parsed {
+				options.JSON = true
+			}
+			continue
+		}
+		if arg == "--automation" {
+			options.Automation = true
+			options.JSON = true
+			continue
+		}
+		if value, ok := strings.CutPrefix(arg, "--automation="); ok {
+			if parsed, err := strconv.ParseBool(value); err == nil && parsed {
+				options.Automation = true
+				options.JSON = true
+			}
+		}
+	}
+}
+
+func normalizeCommandError(cmd *cobra.Command, err error) error {
+	if isUnsupportedUnsettledDateRangeFlag(cmd, err) {
+		return newExitingUsageError("no gateway support: %s is incompatible with unsettled transaction list API (no date/time range allowed)", unknownFlagName(err))
+	}
+	if isUnknownFlagError(err) {
+		return newExitingUsageError("%s", err.Error())
+	}
+	return err
+}
+
+func isUnknownFlagError(err error) bool {
+	message := err.Error()
+	return strings.HasPrefix(message, "unknown flag:") || strings.HasPrefix(message, "unknown shorthand flag:")
+}
+
+func isUnsupportedUnsettledDateRangeFlag(cmd *cobra.Command, err error) bool {
+	if cmd == nil || cmd.CommandPath() != "authnet transaction unsettled list" || !isUnknownFlagError(err) {
+		return false
+	}
+	switch unknownFlagName(err) {
+	case "--last", "--from", "--to":
+		return true
+	default:
+		return false
+	}
+}
+
+func unknownFlagName(err error) string {
+	fields := strings.Fields(err.Error())
+	if len(fields) == 0 {
+		return "flag"
+	}
+	return fields[len(fields)-1]
 }
 
 func validateGlobalOptions(cmd *cobra.Command, config *cliConfig, options *globalOptions) error {
