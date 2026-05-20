@@ -326,7 +326,7 @@ func gatewayEndpointForEnvironment(environment string) (string, error) {
 	}
 }
 
-func (client gatewayClient) authenticate(ctx context.Context, credentials authCredentials) (authenticateTestResponseEnvelope, error) {
+func (client gatewayClient) authenticate(ctx context.Context, credentials authCredentials) (authenticateTestResponseEnvelope, []byte, error) {
 	requestBody := authenticateTestRequestEnvelope{
 		Request: authenticateTestRequest{
 			MerchantAuthentication: merchantAuthentication{
@@ -337,21 +337,21 @@ func (client gatewayClient) authenticate(ctx context.Context, credentials authCr
 	}
 	responseBody, err := client.post(ctx, requestBody, "authentication")
 	if err != nil {
-		return authenticateTestResponseEnvelope{}, err
+		return authenticateTestResponseEnvelope{}, nil, err
 	}
 
 	var parsed authenticateTestResponseEnvelope
 	if err := decodeGatewayJSON(responseBody, &parsed); err != nil {
-		return authenticateTestResponseEnvelope{}, cliError{
+		return authenticateTestResponseEnvelope{}, nil, cliError{
 			exitCode: exitGatewayFailure,
 			code:     "gateway_response_invalid",
 			message:  "Authorize.Net returned an invalid authentication response",
 		}
 	}
-	return parsed, nil
+	return parsed, responseBody, nil
 }
 
-func (client gatewayClient) getTransactionDetails(ctx context.Context, credentials authCredentials, transactionID string) (getTransactionDetailsResponseEnvelope, error) {
+func (client gatewayClient) getTransactionDetails(ctx context.Context, credentials authCredentials, transactionID string) (getTransactionDetailsResponseEnvelope, []byte, error) {
 	requestBody := getTransactionDetailsRequestEnvelope{
 		Request: getTransactionDetailsRequest{
 			MerchantAuthentication: merchantAuthentication{
@@ -363,18 +363,18 @@ func (client gatewayClient) getTransactionDetails(ctx context.Context, credentia
 	}
 	responseBody, err := client.post(ctx, requestBody, "transaction lookup")
 	if err != nil {
-		return getTransactionDetailsResponseEnvelope{}, err
+		return getTransactionDetailsResponseEnvelope{}, nil, err
 	}
 
 	var parsed getTransactionDetailsResponseEnvelope
 	if err := decodeGatewayJSON(responseBody, &parsed); err != nil {
-		return getTransactionDetailsResponseEnvelope{}, cliError{
+		return getTransactionDetailsResponseEnvelope{}, nil, cliError{
 			exitCode: exitGatewayFailure,
 			code:     "gateway_response_invalid",
 			message:  "Authorize.Net returned an invalid transaction lookup response",
 		}
 	}
-	return parsed, nil
+	return parsed, responseBody, nil
 }
 
 func (client gatewayClient) getCustomerProfile(ctx context.Context, credentials authCredentials, customerProfileID string) (getCustomerProfileResponseEnvelope, error) {

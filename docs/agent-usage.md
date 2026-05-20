@@ -72,11 +72,12 @@ Avoid broad production reads. Use bounded pagination and narrow time ranges wher
 
 Never request raw production output. Raw response mode is sandbox-only:
 
-**NOTE:** The current CLI enforces the sandbox-only `--raw-response` safety gate, but command-specific raw gateway response emission has not landed yet.
-
 ```sh
-authnet --automation --raw-response --profile sandbox-main version
+authnet --automation --raw-response --profile sandbox-main auth test
+authnet --automation --raw-response --profile sandbox-main transaction get TRANSACTION_ID
 ```
+
+Those are the only supported raw-response commands. Other commands fail clearly when `--raw-response` is provided.
 
 Sandbox raw output can still contain sensitive-looking test data. Do not save it unless that is necessary for the task and the destination is appropriate.
 

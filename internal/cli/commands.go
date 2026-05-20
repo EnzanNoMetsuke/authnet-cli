@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -144,9 +146,10 @@ func newAuthCommand() *cobra.Command {
 		Short: "Test Authorize.Net profile authentication",
 	}
 	auth.AddCommand(&cobra.Command{
-		Use:   "test",
-		Short: "Test selected profile authentication",
-		RunE:  runAuthTest,
+		Use:         "test",
+		Short:       "Test selected profile authentication",
+		Annotations: map[string]string{rawResponseSupportAnnotation: "supported"},
+		RunE:        runAuthTest,
 	})
 	return auth
 }
@@ -228,10 +231,11 @@ func newTransactionCommand() *cobra.Command {
 		Short: "Inspect Authorize.Net transactions",
 	}
 	transaction.AddCommand(&cobra.Command{
-		Use:   "get TRANSACTION_ID",
-		Short: "Inspect one transaction",
-		Args:  cobra.ExactArgs(1),
-		RunE:  runTransactionGet,
+		Use:         "get TRANSACTION_ID",
+		Short:       "Inspect one transaction",
+		Args:        cobra.ExactArgs(1),
+		Annotations: map[string]string{rawResponseSupportAnnotation: "supported"},
+		RunE:        runTransactionGet,
 	})
 	listOptions := &transactionListOptions{
 		Limit: defaultTransactionListLimit,
@@ -504,6 +508,10 @@ type authTestData struct {
 	Message                   string `json:"message"`
 }
 
+type rawGatewayResponseData struct {
+	RawGatewayResponse json.RawMessage `json:"raw_gateway_response"`
+}
+
 type transactionLookupData struct {
 	TransactionID             string                 `json:"transaction_id"`
 	ProfileName               string                 `json:"profile_name"`
@@ -625,9 +633,12 @@ func runAuthTest(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	response, err := client.authenticate(cmd.Context(), profile.Credentials)
+	response, rawResponse, err := client.authenticate(cmd.Context(), profile.Credentials)
 	if err != nil {
 		return err
+	}
+	if options.RawResponse {
+		return renderRawGatewayResponse(cmd, rawResponse)
 	}
 
 	message := firstGatewayMessage(response.Messages.Message)
@@ -678,6 +689,27 @@ func runAuthTest(cmd *cobra.Command, _ []string) error {
 	})
 }
 
+func renderRawGatewayResponse(cmd *cobra.Command, rawResponse []byte) error {
+	trimmed := bytes.TrimSpace(bytes.TrimPrefix(rawResponse, []byte("\xef\xbb\xbf")))
+	if len(trimmed) == 0 {
+		return cliError{
+			exitCode: exitGatewayFailure,
+			code:     "gateway_response_invalid",
+			message:  "Authorize.Net returned an empty raw gateway response",
+		}
+	}
+	if optionsFromCommand(cmd).JSON {
+		return renderResult(cmd, commandResult{
+			Data: rawGatewayResponseData{
+				RawGatewayResponse: json.RawMessage(trimmed),
+			},
+			Redacted: boolPointer(false),
+		})
+	}
+	_, err := fmt.Fprintln(cmd.OutOrStdout(), string(trimmed))
+	return err
+}
+
 func runTransactionGet(cmd *cobra.Command, args []string) error {
 	transactionID := strings.TrimSpace(args[0])
 	if transactionID == "" {
@@ -693,9 +725,12 @@ func runTransactionGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	response, err := client.getTransactionDetails(cmd.Context(), profile.Credentials, transactionID)
+	response, rawResponse, err := client.getTransactionDetails(cmd.Context(), profile.Credentials, transactionID)
 	if err != nil {
 		return err
+	}
+	if options.RawResponse {
+		return renderRawGatewayResponse(cmd, rawResponse)
 	}
 
 	message := firstGatewayMessage(response.Messages.Message)

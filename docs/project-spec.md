@@ -125,9 +125,13 @@ The CLI does not make a PCI-DSS or other compliance guarantee. It is designed to
 Raw response mode:
 
 - Available only for sandbox-classified profiles.
-  - **NOTE:** The current implementation enforces the sandbox-only `--raw-response` safety gate, but command-specific raw gateway response emission has not landed yet.
 - Explicit only.
 - Never available for production profiles.
+- Supported by:
+  - `authnet auth test`
+  - `authnet transaction get TRANSACTION_ID`
+- Unsupported commands fail clearly when `--raw-response` is provided.
+- JSON raw-response output uses the standard envelope with `redacted: false` and `data.raw_gateway_response`.
 
 Dry-run mode:
 

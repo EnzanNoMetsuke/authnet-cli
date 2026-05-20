@@ -65,6 +65,15 @@ preferences:
 
 Supported values are `auto`, `always`, and `never`. Explicit flags such as `--color=always` and `--no-color` override the persisted preference for one invocation. `--automation` always forces JSON output with no color.
 
+Raw gateway response output is sandbox-only and explicit. Supported commands are:
+
+```sh
+authnet --raw-response --profile sandbox-main auth test
+authnet --raw-response --profile sandbox-main transaction get TRANSACTION_ID
+```
+
+Production profiles and unsupported commands are denied before raw gateway output is emitted.
+
 Sandbox charge helpers are sandbox-only and use test-card aliases instead of raw card-number entry:
 
 ```sh

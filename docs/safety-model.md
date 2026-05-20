@@ -52,6 +52,15 @@ Raw response mode is sandbox-only and explicit. It is never available for produc
 
 Operators and agents must not request raw production output. If a command would expose raw production gateway data, it must fail before contacting the production environment.
 
+Supported raw-response commands:
+
+```text
+authnet auth test
+authnet transaction get TRANSACTION_ID
+```
+
+Commands outside that list fail clearly when `--raw-response` is provided. JSON raw-response output keeps the standard envelope, sets `redacted` to `false`, and places the unredacted gateway object in `data.raw_gateway_response`.
+
 ## Automation Boundary
 
 `--automation` implies JSON output, no color, no prompts, no TUI or wizard behavior, structured failures on stdout, and the exit-code taxonomy.

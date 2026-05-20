@@ -5,7 +5,7 @@ AUTHNET_BIN ?= $(CURDIR)/bin/authnet
 VERSION ?= 0.0.0-dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || printf unknown)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-SCHEMA_VERSION ?= 0.1.0
+SCHEMA_VERSION ?= 0.2.0
 CONTRACT_STATUS ?= alpha
 LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(BUILD_DATE) -X main.schemaVersion=$(SCHEMA_VERSION) -X main.contractStatus=$(CONTRACT_STATUS)
 GOCACHE ?= $(CURDIR)/.cache/go-build

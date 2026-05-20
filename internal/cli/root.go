@@ -12,8 +12,9 @@ import (
 type contextKey string
 
 const (
-	optionsContextKey contextKey = "options"
-	buildContextKey   contextKey = "build"
+	optionsContextKey            contextKey = "options"
+	buildContextKey              contextKey = "build"
+	rawResponseSupportAnnotation            = "authnet.raw_response"
 )
 
 type globalOptions struct {
@@ -154,10 +155,25 @@ func validateGlobalOptions(cmd *cobra.Command, config *cliConfig, options *globa
 	if err := resolveProfileEnvironment(options); err != nil {
 		return err
 	}
+	if options.RawResponse && options.Environment == environmentProduction {
+		return newSafetyDeniedError("raw response mode requires a sandbox-classified profile or AUTHNET_ENVIRONMENT=sandbox")
+	}
+	if options.RawResponse && !commandSupportsRawResponse(cmd) {
+		return newUsageError("raw response mode is not supported for %s", cmd.CommandPath())
+	}
 	if options.RawResponse && options.Environment != environmentSandbox {
 		return newSafetyDeniedError("raw response mode requires a sandbox-classified profile or AUTHNET_ENVIRONMENT=sandbox")
 	}
 	return nil
+}
+
+func commandSupportsRawResponse(cmd *cobra.Command) bool {
+	for current := cmd; current != nil; current = current.Parent() {
+		if current.Annotations != nil && current.Annotations[rawResponseSupportAnnotation] == "supported" {
+			return true
+		}
+	}
+	return false
 }
 
 func commandUsesPreferences(cmd *cobra.Command) bool {

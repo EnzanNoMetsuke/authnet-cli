@@ -82,13 +82,14 @@ type commandResult struct {
 	Warnings []warning
 	Errors   []structuredError
 	Human    func(io.Writer) error
+	Redacted *bool
 }
 
 func renderResult(cmd *cobra.Command, result commandResult) error {
 	result = sanitizeCommandResult(result)
 	options := optionsFromCommand(cmd)
 	if options.JSON {
-		return writeOutputJSON(cmd.OutOrStdout(), newEnvelope(cmd, result.Data, result.Warnings, result.Errors), colorEnabled(options))
+		return writeOutputJSON(cmd.OutOrStdout(), newEnvelope(cmd, result.Data, result.Warnings, result.Errors, resultRedacted(result)), colorEnabled(options))
 	}
 	if result.Human == nil {
 		return nil
@@ -151,7 +152,7 @@ func writeHumanTable(writer io.Writer, headers []string, rows [][]string, color 
 	return err
 }
 
-func newEnvelope(cmd *cobra.Command, data any, warnings []warning, errs []structuredError) envelope {
+func newEnvelope(cmd *cobra.Command, data any, warnings []warning, errs []structuredError, redacted bool) envelope {
 	options := optionsFromCommand(cmd)
 	if warnings == nil {
 		warnings = []warning{}
@@ -164,7 +165,7 @@ func newEnvelope(cmd *cobra.Command, data any, warnings []warning, errs []struct
 		Command:                   cmd.CommandPath(),
 		ProfileName:               options.Profile,
 		EnvironmentClassification: options.Environment,
-		Redacted:                  redactedByDefault,
+		Redacted:                  redacted,
 		Warnings:                  warnings,
 		Errors:                    errs,
 		Data:                      data,
@@ -196,12 +197,12 @@ func structuredFailure(cmd *cobra.Command, err error) (envelope, ExitCode) {
 		return newEnvelope(cmd, nil, nil, []structuredError{{
 			Code:    appErr.code,
 			Message: sanitizeString(appErr.message),
-		}}), appErr.exitCode
+		}}, redactedByDefault), appErr.exitCode
 	}
 	return newEnvelope(cmd, nil, nil, []structuredError{{
 		Code:    "general_failure",
 		Message: sanitizeString(err.Error()),
-	}}), exitGeneralFailure
+	}}, redactedByDefault), exitGeneralFailure
 }
 
 func exitCodeForError(err error) ExitCode {
@@ -235,7 +236,9 @@ func colorEnabled(options *globalOptions) bool {
 }
 
 func sanitizeCommandResult(result commandResult) commandResult {
-	result.Data = sanitizeForOutput(result.Data)
+	if resultRedacted(result) {
+		result.Data = sanitizeForOutput(result.Data)
+	}
 	if result.Warnings != nil {
 		result.Warnings = sanitizeForOutput(result.Warnings).([]warning)
 	}
@@ -243,4 +246,15 @@ func sanitizeCommandResult(result commandResult) commandResult {
 		result.Errors = sanitizeForOutput(result.Errors).([]structuredError)
 	}
 	return result
+}
+
+func resultRedacted(result commandResult) bool {
+	if result.Redacted == nil {
+		return redactedByDefault
+	}
+	return *result.Redacted
+}
+
+func boolPointer(value bool) *bool {
+	return &value
 }

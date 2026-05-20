@@ -3,7 +3,7 @@ package cli
 
 const (
 	defaultVersion        = "0.0.0-dev"
-	defaultSchemaVersion  = "0.1.0"
+	defaultSchemaVersion  = "0.2.0"
 	defaultContractStatus = "alpha"
 )
 
