@@ -1678,16 +1678,19 @@ func TestTransactionSortValidationRejectsInvalidSources(t *testing.T) {
 
 func TestUnknownFlagRespectsStructuredOutputMode(t *testing.T) {
 	tests := []struct {
-		name string
-		args []string
+		name    string
+		args    []string
+		message string
 	}{
 		{
-			name: "json after unknown flag",
-			args: []string{"transaction", "unsettled", "list", "--pizza", "--sort-by", "amount", "--sort-order", "ascending", "--json", "--limit", "5"},
+			name:    "json after unknown flag",
+			args:    []string{"transaction", "unsettled", "list", "--pizza", "--sort-by", "amount", "--sort-order", "ascending", "--json", "--limit", "5"},
+			message: `"message": "unknown flag: --pizza"`,
 		},
 		{
-			name: "automation after unknown flag",
-			args: []string{"transaction", "unsettled", "list", "--last", "7d", "--automation", "--limit", "5"},
+			name:    "automation after unsupported unsettled date range flag",
+			args:    []string{"transaction", "unsettled", "list", "--last", "7d", "--automation", "--limit", "5"},
+			message: `"message": "no gateway support: --last is incompatible with unsettled transaction list API (no date/time range allowed)"`,
 		},
 	}
 	for _, test := range tests {
@@ -1706,7 +1709,7 @@ func TestUnknownFlagRespectsStructuredOutputMode(t *testing.T) {
 			}
 			assertContains(t, stdout, `"command": "authnet transaction unsettled list"`)
 			assertContains(t, stdout, `"code": "usage_or_config_error"`)
-			assertContains(t, stdout, `"message": "unknown flag: --`)
+			assertContains(t, stdout, test.message)
 		})
 	}
 }

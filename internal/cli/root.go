@@ -94,12 +94,12 @@ func execute(command *cobra.Command) ExitCode {
 	if err == nil {
 		return exitSuccess
 	}
-	err = normalizeCommandError(err)
 
 	target := executed
 	if target == nil {
 		target = command
 	}
+	err = normalizeCommandError(target, err)
 	options := optionsFromCommand(target)
 	if !options.JSON {
 		var exiting exitingError
@@ -156,7 +156,10 @@ func applyOutputModeFromRawArgs(options *globalOptions, args []string) {
 	}
 }
 
-func normalizeCommandError(err error) error {
+func normalizeCommandError(cmd *cobra.Command, err error) error {
+	if isUnsupportedUnsettledDateRangeFlag(cmd, err) {
+		return newExitingUsageError("no gateway support: %s is incompatible with unsettled transaction list API (no date/time range allowed)", unknownFlagName(err))
+	}
 	if isUnknownFlagError(err) {
 		return newExitingUsageError("%s", err.Error())
 	}
@@ -166,6 +169,26 @@ func normalizeCommandError(err error) error {
 func isUnknownFlagError(err error) bool {
 	message := err.Error()
 	return strings.HasPrefix(message, "unknown flag:") || strings.HasPrefix(message, "unknown shorthand flag:")
+}
+
+func isUnsupportedUnsettledDateRangeFlag(cmd *cobra.Command, err error) bool {
+	if cmd == nil || cmd.CommandPath() != "authnet transaction unsettled list" || !isUnknownFlagError(err) {
+		return false
+	}
+	switch unknownFlagName(err) {
+	case "--last", "--from", "--to":
+		return true
+	default:
+		return false
+	}
+}
+
+func unknownFlagName(err error) string {
+	fields := strings.Fields(err.Error())
+	if len(fields) == 0 {
+		return "flag"
+	}
+	return fields[len(fields)-1]
 }
 
 func validateGlobalOptions(cmd *cobra.Command, config *cliConfig, options *globalOptions) error {
