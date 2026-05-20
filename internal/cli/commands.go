@@ -69,7 +69,7 @@ func newPathsCommand() *cobra.Command {
 				},
 				Warnings: warnings,
 				Human: func(writer io.Writer) error {
-					_, err := fmt.Fprintf(writer, "config directory: %s\nsensitive-data persistence: none\n", configDir)
+					_, err := fmt.Fprintf(writer, "config directory: %s\nprofile config file: %s\nsensitive-data persistence: none\n", configDir, filepath.Join(configDir, profileConfigFileName))
 					return err
 				},
 			})

@@ -85,6 +85,8 @@ Profile config:
 
 - Store non-secret profile config in the OS user config directory.
 - Use `authnet-cli` as the subdirectory under `os.UserConfigDir()`.
+- Store the unified profile config as `config.yaml`.
+- Read legacy `profiles.json` files compatibly and migrate their non-secret profile metadata into `config.yaml` on the next profile config write.
 - Provide `authnet paths` to surface the resolved config directory.
 - Allow environment overrides for automation and one-off use.
 
@@ -459,7 +461,7 @@ Do not list deferred future surfaces as non-goals.
 These decisions reflect the current implementation and should be revised deliberately when behavior changes:
 
 - Exact JSON envelope field names and schema-versioning policy: the current JSON envelope uses `schema_version`, `command`, optional `profile_name`, optional `environment_classification`, `redacted`, `warnings`, `errors`, and command-specific `data`; the schema version is explicit release metadata, not automatically derived from the CLI version.
-- Exact config file format: profile metadata is stored as `profiles.json` under the resolved `authnet-cli` config directory, with a version number, optional sandbox default profile, profile environment classification, and non-secret credential-source references.
+- Exact config file format: profile metadata is stored as `config.yaml` under the resolved `authnet-cli` config directory, with a version number, optional sandbox default profile, profile environment classification, non-secret credential-source references, and a reserved non-secret preferences section. Legacy `profiles.json` files are read compatibly and migrated on the next profile config write.
 - Exact keychain backend/library: no keychain backend is implemented yet. Secure local references may be recorded as profile metadata, but gateway commands currently require environment credential sources.
 - Exact response-code reference source/update workflow: `authnet response-code explain` uses the checked-in curated reference in `internal/cli/response_codes.go`; updates follow `docs/response-code-reference.md` and should review the official Authorize.Net response-code sources before changing records.
 - Exact bounded-pagination defaults and maximums: transaction list-style commands default to 25 records and reject limits above 100.

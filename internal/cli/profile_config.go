@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"go.yaml.in/yaml/v3"
 )
 
 const (
@@ -18,7 +20,8 @@ const (
 	environmentEnvName          = "AUTHNET_ENVIRONMENT"
 	apiLoginIDEnvName           = "AUTHNET_API_LOGIN_ID"
 	transactionKeyEnvName       = "AUTHNET_TRANSACTION_KEY"
-	profileConfigFileName       = "profiles.json"
+	profileConfigFileName       = "config.yaml"
+	legacyProfileConfigFileName = "profiles.json"
 	profileConfigVersion        = 1
 	environmentSandbox          = "sandbox"
 	environmentProduction       = "production"
@@ -30,27 +33,29 @@ const (
 )
 
 type profileStore struct {
-	dir  string
-	path string
+	dir        string
+	path       string
+	legacyPath string
 }
 
 type profileFile struct {
-	Version        int            `json:"version"`
-	DefaultProfile string         `json:"default_profile,omitempty"`
-	Profiles       []profileEntry `json:"profiles"`
+	Version        int            `json:"version" yaml:"version"`
+	DefaultProfile string         `json:"default_profile,omitempty" yaml:"default_profile,omitempty"`
+	Profiles       []profileEntry `json:"profiles" yaml:"profiles"`
+	Preferences    map[string]any `json:"preferences,omitempty" yaml:"preferences"`
 }
 
 type profileEntry struct {
-	Name             string           `json:"name"`
-	Environment      string           `json:"environment"`
-	CredentialSource credentialSource `json:"credential_source"`
+	Name             string           `json:"name" yaml:"name"`
+	Environment      string           `json:"environment" yaml:"environment"`
+	CredentialSource credentialSource `json:"credential_source" yaml:"credential_source"`
 }
 
 type credentialSource struct {
-	Type              string `json:"type"`
-	APILoginIDEnv     string `json:"api_login_id_env,omitempty"`
-	TransactionKeyEnv string `json:"transaction_key_env,omitempty"`
-	Reference         string `json:"reference,omitempty"`
+	Type              string `json:"type" yaml:"type"`
+	APILoginIDEnv     string `json:"api_login_id_env,omitempty" yaml:"api_login_id_env,omitempty"`
+	TransactionKeyEnv string `json:"transaction_key_env,omitempty" yaml:"transaction_key_env,omitempty"`
+	Reference         string `json:"reference,omitempty" yaml:"reference,omitempty"`
 }
 
 type validationResult struct {
@@ -73,31 +78,63 @@ func newProfileStore() (profileStore, error) {
 		return profileStore{}, err
 	}
 	return profileStore{
-		dir:  dir,
-		path: filepath.Join(dir, profileConfigFileName),
+		dir:        dir,
+		path:       filepath.Join(dir, profileConfigFileName),
+		legacyPath: filepath.Join(dir, legacyProfileConfigFileName),
 	}, nil
 }
 
 func (store profileStore) load() (profileFile, error) {
 	data, err := os.ReadFile(store.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return profileFile{Version: profileConfigVersion, Profiles: []profileEntry{}}, nil
+		return store.loadLegacy()
 	}
 	if err != nil {
 		return profileFile{}, fmt.Errorf("read profile config: %w", err)
 	}
 
 	var file profileFile
-	if err := json.Unmarshal(data, &file); err != nil {
-		return profileFile{}, newUsageError("profile config is not valid JSON: %v", err)
+	if err := yaml.Unmarshal(data, &file); err != nil {
+		return profileFile{}, newUsageError("profile config is not valid YAML: %v", err)
 	}
+	return normalizeProfileFile(file), nil
+}
+
+func (store profileStore) loadLegacy() (profileFile, error) {
+	data, err := os.ReadFile(store.legacyPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return newProfileFile(), nil
+	}
+	if err != nil {
+		return profileFile{}, fmt.Errorf("read legacy profile config: %w", err)
+	}
+
+	var file profileFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		return profileFile{}, newUsageError("legacy profile config is not valid JSON: %v", err)
+	}
+	return normalizeProfileFile(file), nil
+}
+
+func newProfileFile() profileFile {
+	return profileFile{
+		Version:     profileConfigVersion,
+		Profiles:    []profileEntry{},
+		Preferences: map[string]any{},
+	}
+}
+
+func normalizeProfileFile(file profileFile) profileFile {
 	if file.Version == 0 {
 		file.Version = profileConfigVersion
 	}
 	if file.Profiles == nil {
 		file.Profiles = []profileEntry{}
 	}
-	return file, nil
+	if file.Preferences == nil {
+		file.Preferences = map[string]any{}
+	}
+	return file
 }
 
 func (store profileStore) save(file profileFile) error {
@@ -105,13 +142,15 @@ func (store profileStore) save(file profileFile) error {
 		return fmt.Errorf("create profile config directory: %w", err)
 	}
 	file.Version = profileConfigVersion
+	if file.Preferences == nil {
+		file.Preferences = map[string]any{}
+	}
 	sortProfiles(file.Profiles)
 
-	data, err := json.MarshalIndent(file, "", "  ")
+	data, err := yaml.Marshal(file)
 	if err != nil {
 		return fmt.Errorf("encode profile config: %w", err)
 	}
-	data = append(data, '\n')
 	if err := os.WriteFile(store.path, data, 0o600); err != nil {
 		return fmt.Errorf("write profile config: %w", err)
 	}

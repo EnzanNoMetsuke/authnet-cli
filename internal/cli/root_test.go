@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -160,6 +161,8 @@ func TestPathsWarningsRenderForHumanAndJSON(t *testing.T) {
 		t.Fatalf("expected paths command to succeed: %v", err)
 	}
 	assertContains(t, stdout, "config directory:")
+	assertContains(t, stdout, "profile config file:")
+	assertContains(t, stdout, "config.yaml")
 	assertContains(t, stdout, "sensitive-data persistence: none")
 	assertContains(t, stderr, "warning: v1 does not define CLI-controlled sensitive-data persistence paths.")
 
@@ -1689,7 +1692,7 @@ func TestProfileSetupListValidateAndRemove(t *testing.T) {
 		t.Fatalf("expected profile config file to exist: %v", err)
 	}
 	configText := string(configBytes)
-	assertContains(t, configText, `"api_login_id_env": "AUTHNET_API_LOGIN_ID"`)
+	assertContains(t, configText, "api_login_id_env: AUTHNET_API_LOGIN_ID")
 	assertNotContains(t, configText, "secret-login")
 	assertNotContains(t, configText, "secret-key")
 	assertNotContains(t, configText, "prod-login")
@@ -1705,6 +1708,92 @@ func TestProfileSetupListValidateAndRemove(t *testing.T) {
 		t.Fatalf("expected profile list after remove to succeed: %v", err)
 	}
 	assertNotContains(t, stdout, "prod-main")
+}
+
+func TestProfileSetupWritesUnifiedYAMLConfigWithoutSecrets(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+
+	stdout, stderr, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"config_path": "`+filepath.Join(configDir, "config.yaml")+`"`)
+
+	configBytes, err := os.ReadFile(filepath.Join(configDir, "config.yaml")) // #nosec G304 - test reads the command output from a t.TempDir config root.
+	if err != nil {
+		t.Fatalf("expected unified YAML config file to exist: %v", err)
+	}
+	configText := string(configBytes)
+	assertContains(t, configText, "version: 1")
+	assertContains(t, configText, "default_profile: sandbox-main")
+	assertContains(t, configText, "profiles:")
+	assertContains(t, configText, "api_login_id_env: AUTHNET_API_LOGIN_ID")
+	assertContains(t, configText, "preferences:")
+	assertNotContains(t, configText, "secret-login")
+	assertNotContains(t, configText, "secret-key")
+	if _, err := os.Stat(filepath.Join(configDir, "profiles.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected new writes to avoid profiles.json, stat error: %v", err)
+	}
+}
+
+func TestLegacyProfilesJSONIsReadAndMigratedOnNextWrite(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "sandbox-secret-login")
+	t.Setenv(transactionKeyEnvName, "sandbox-secret-key")
+	t.Setenv("PROD_LOGIN", "prod-secret-login")
+	t.Setenv("PROD_KEY", "prod-secret-key")
+
+	legacyConfig := `{
+  "version": 1,
+  "default_profile": "sandbox-main",
+  "profiles": [
+    {
+      "name": "sandbox-main",
+      "environment": "sandbox",
+      "credential_source": {
+        "type": "env",
+        "api_login_id_env": "AUTHNET_API_LOGIN_ID",
+        "transaction_key_env": "AUTHNET_TRANSACTION_KEY"
+      }
+    }
+  ]
+}
+`
+	if err := os.WriteFile(filepath.Join(configDir, "profiles.json"), []byte(legacyConfig), 0o600); err != nil {
+		t.Fatalf("expected to write legacy profile config fixture: %v", err)
+	}
+
+	stdout, stderr, err := executeCommand("--json", "profile", "list")
+	if err != nil {
+		t.Fatalf("expected legacy profile list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"name": "sandbox-main"`)
+	assertContains(t, stdout, `"default": true`)
+
+	stdout, stderr, err = executeCommand("--automation", "profile", "setup", "--name", "prod-main", "--environment", "production", "--api-login-id-env", "PROD_LOGIN", "--transaction-key-env", "PROD_KEY")
+	if err != nil {
+		t.Fatalf("expected profile setup to migrate legacy config: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"config_path": "`+filepath.Join(configDir, "config.yaml")+`"`)
+
+	configBytes, err := os.ReadFile(filepath.Join(configDir, "config.yaml")) // #nosec G304 - test reads the command output from a t.TempDir config root.
+	if err != nil {
+		t.Fatalf("expected migrated YAML profile config to exist: %v", err)
+	}
+	configText := string(configBytes)
+	assertContains(t, configText, "default_profile: sandbox-main")
+	assertContains(t, configText, "name: sandbox-main")
+	assertContains(t, configText, "name: prod-main")
+	assertContains(t, configText, "api_login_id_env: PROD_LOGIN")
+	assertContains(t, configText, "preferences:")
+	assertNotContains(t, configText, "sandbox-secret-login")
+	assertNotContains(t, configText, "sandbox-secret-key")
+	assertNotContains(t, configText, "prod-secret-login")
+	assertNotContains(t, configText, "prod-secret-key")
 }
 
 func TestInteractiveProfileSetupPromptsForMissingValues(t *testing.T) {
@@ -1743,6 +1832,24 @@ func TestProfileSetupRejectsInvalidEnvironment(t *testing.T) {
 		t.Fatalf("expected usage/config exit code, got %d", code)
 	}
 	assertContains(t, err.Error(), "expected sandbox or production")
+}
+
+func TestConfigValidateRejectsMalformedYAMLConfig(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("profiles: [\n"), 0o600); err != nil {
+		t.Fatalf("expected to write malformed YAML config fixture: %v", err)
+	}
+
+	stdout, stderr, code, err := executeCommandWithExit("--json", "config", "validate")
+	if err == nil {
+		t.Fatal("expected config validate to fail for malformed YAML")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "usage_or_config_error"`)
+	assertContains(t, stdout, "profile config is not valid YAML")
 }
 
 func TestConfigValidateReportsMissingCredentialSources(t *testing.T) {
