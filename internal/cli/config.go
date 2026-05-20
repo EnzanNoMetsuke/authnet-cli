@@ -65,9 +65,6 @@ func newCLIConfig(flags *pflag.FlagSet) (*cliConfig, error) {
 			}
 		}
 	}
-	if err := config.applyPreferences(); err != nil {
-		return nil, err
-	}
 	return config, nil
 }
 

@@ -118,6 +118,11 @@ func Execute(command *cobra.Command) ExitCode {
 }
 
 func validateGlobalOptions(cmd *cobra.Command, config *cliConfig, options *globalOptions) error {
+	if commandUsesPreferences(cmd) {
+		if err := config.applyPreferences(); err != nil {
+			return err
+		}
+	}
 	config.applyGlobalOptions(options)
 	if options.Automation {
 		options.JSON = true
@@ -127,10 +132,14 @@ func validateGlobalOptions(cmd *cobra.Command, config *cliConfig, options *globa
 			return err
 		}
 	}
+	colorFlagChanged := cmd.Root().PersistentFlags().Lookup(configKeyColor).Changed
+	if options.NoColor && !colorFlagChanged {
+		options.Color = "never"
+	}
 	switch options.Color {
 	case "auto", "always", "never":
 	default:
-		if cmd.CommandPath() == "authnet config validate" && !cmd.Root().PersistentFlags().Lookup(configKeyColor).Changed && !isColorEnvironmentOverrideSet() {
+		if cmd.CommandPath() == "authnet config validate" && !colorFlagChanged && !isColorEnvironmentOverrideSet() {
 			break
 		}
 		return invalidColorValueError(cmd, config, options.Color)
@@ -149,6 +158,10 @@ func validateGlobalOptions(cmd *cobra.Command, config *cliConfig, options *globa
 		return newSafetyDeniedError("raw response mode requires a sandbox-classified profile or AUTHNET_ENVIRONMENT=sandbox")
 	}
 	return nil
+}
+
+func commandUsesPreferences(cmd *cobra.Command) bool {
+	return cmd.CommandPath() != "authnet paths"
 }
 
 func invalidColorValueError(cmd *cobra.Command, config *cliConfig, color string) error {

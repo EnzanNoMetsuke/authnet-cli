@@ -191,6 +191,22 @@ func TestPathsWarningsRenderForHumanAndJSON(t *testing.T) {
 	assertNotContains(t, stderr, "warning:")
 }
 
+func TestPathsDoesNotRequireValidProfileConfigYAML(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte("profiles: [\n"), 0o600); err != nil {
+		t.Fatalf("expected to write malformed YAML config fixture: %v", err)
+	}
+
+	stdout, stderr, err := executeCommand("paths")
+	if err != nil {
+		t.Fatalf("expected paths command to succeed with malformed profile config: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, "config directory: "+configDir)
+	assertContains(t, stdout, "profile config file: "+filepath.Join(configDir, profileConfigFileName))
+	assertNotContains(t, stderr, "profile config is not valid YAML")
+}
+
 func TestJSONFailuresAreStructuredOnStdout(t *testing.T) {
 	stdout, stderr, code, err := executeCommandWithExit("--json", "--color=purple", "version")
 	if err == nil {
@@ -303,6 +319,32 @@ func TestInvalidColorPreferenceReportsSourceInHumanOutput(t *testing.T) {
 	assertContains(t, stderr, filepath.Join(configDir, profileConfigFileName))
 	assertContains(t, stderr, `"pizza"`)
 	assertNotContains(t, stderr, `invalid --color value`)
+}
+
+func TestNoColorOverridesInvalidColorPreference(t *testing.T) {
+	writeInvalidColorPreferenceConfig(t, "pizza")
+
+	stdout, stderr, code, err := executeCommandWithExit("--no-color", "version")
+	if err != nil {
+		t.Fatalf("expected --no-color to override invalid color preference: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	if code != exitSuccess {
+		t.Fatalf("expected success exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, "authnet 0.1.0-test")
+	assertNotContains(t, stderr, "preferences.color")
+	assertNotContains(t, stdout, "\x1b[")
+}
+
+func TestNoColorDoesNotHideInvalidExplicitColorFlag(t *testing.T) {
+	_, stderr, code, err := executeCommandWithExit("--color=purple", "--no-color", "version")
+	if err != nil {
+		t.Fatalf("expected human invalid explicit color to be shell-safe: %v", err)
+	}
+	if code != exitSuccess {
+		t.Fatalf("expected shell-safe success exit code, got %d", code)
+	}
+	assertContains(t, stderr, `invalid --color value "purple"`)
 }
 
 func TestSandboxHelpShowsChargeCommands(t *testing.T) {
