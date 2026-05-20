@@ -1683,6 +1683,92 @@ func TestEnvironmentOverridesAppearInJSONEnvelope(t *testing.T) {
 	assertContains(t, stdout, `"environment_classification": "sandbox"`)
 }
 
+func TestGlobalProfilePrecedenceUsesFlagsEnvironmentProfileConfigAndDefaults(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "dummy-login")
+	t.Setenv(transactionKeyEnvName, "dummy-key")
+	sandboxServer := newAuthTestServer(t, http.StatusOK, `{
+		"messages": {
+			"resultCode": "Ok",
+			"message": [{"code": "I00001", "text": "Successful."}]
+		}
+	}`)
+	productionServer := newAuthTestServer(t, http.StatusOK, `{
+		"messages": {
+			"resultCode": "Ok",
+			"message": [{"code": "I00001", "text": "Successful."}]
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, sandboxServer.URL)
+	withGatewayTestEndpoint(t, environmentProduction, productionServer.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-default", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected sandbox default setup to succeed: %v", err)
+	}
+	_, _, err = executeCommand("--automation", "profile", "setup", "--name", "sandbox-env", "--environment", "sandbox")
+	if err != nil {
+		t.Fatalf("expected sandbox env setup to succeed: %v", err)
+	}
+	_, _, err = executeCommand("--automation", "profile", "setup", "--name", "prod-flag", "--environment", "production")
+	if err != nil {
+		t.Fatalf("expected production flag setup to succeed: %v", err)
+	}
+
+	stdout, _, err := executeCommand("--json", "auth", "test")
+	if err != nil {
+		t.Fatalf("expected profile config default to resolve: %v", err)
+	}
+	assertContains(t, stdout, `"profile_name": "sandbox-default"`)
+	assertContains(t, stdout, `"environment_classification": "sandbox"`)
+
+	t.Setenv(profileEnvName, "sandbox-env")
+	stdout, _, err = executeCommand("--json", "auth", "test")
+	if err != nil {
+		t.Fatalf("expected environment profile override to resolve: %v", err)
+	}
+	assertContains(t, stdout, `"profile_name": "sandbox-env"`)
+
+	stdout, _, err = executeCommand("--json", "--profile", "prod-flag", "auth", "test")
+	if err != nil {
+		t.Fatalf("expected command-line profile override to resolve: %v", err)
+	}
+	assertContains(t, stdout, `"profile_name": "prod-flag"`)
+	assertContains(t, stdout, `"environment_classification": "production"`)
+}
+
+func TestRawResponseProductionProfileIsDeniedBeforeGatewayRequest(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "prod-login")
+	t.Setenv(transactionKeyEnvName, "prod-key")
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		called = true
+	}))
+	t.Cleanup(server.Close)
+	withGatewayTestEndpoint(t, environmentProduction, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "prod-main", "--environment", "production")
+	if err != nil {
+		t.Fatalf("expected production profile setup to succeed: %v", err)
+	}
+
+	stdout, stderr, code, err := executeCommandWithExit("--json", "--raw-response", "--profile", "prod-main", "auth", "test")
+	if err == nil {
+		t.Fatal("expected production raw-response auth test to fail")
+	}
+	if code != exitSafetyDenied {
+		t.Fatalf("expected safety denied exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if called {
+		t.Fatal("production raw-response request unexpectedly contacted gateway")
+	}
+	assertContains(t, stdout, `"code": "safety_policy_denied"`)
+	assertContains(t, stdout, "raw response mode is unavailable for production-classified profiles")
+}
+
 func TestRawResponseModeRequiresSandboxClassification(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv(configEnvName, configDir)

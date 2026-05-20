@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 )
@@ -641,8 +640,8 @@ func loadSelectedProfileWithCredentials(options *globalOptions, commandName stri
 func credentialsForProfile(profile profileEntry, commandName string) (authCredentials, error) {
 	switch profile.CredentialSource.Type {
 	case credentialSourceEnv:
-		loginID := os.Getenv(profile.CredentialSource.APILoginIDEnv)
-		transactionKey := os.Getenv(profile.CredentialSource.TransactionKeyEnv)
+		loginID := configuredEnvironmentValue(profile.CredentialSource.APILoginIDEnv)
+		transactionKey := configuredEnvironmentValue(profile.CredentialSource.TransactionKeyEnv)
 		missing := []string{}
 		if loginID == "" {
 			missing = append(missing, profile.CredentialSource.APILoginIDEnv)

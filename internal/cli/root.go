@@ -3,8 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -51,8 +49,15 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 	root.PersistentFlags().StringVar(&options.Color, "color", "auto", "control color output: auto, always, never")
 	root.PersistentFlags().BoolVar(&options.NoColor, "no-color", false, "disable color output")
 
-	root.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
-		return validateGlobalOptions(options)
+	config, err := newCLIConfig(root.PersistentFlags())
+	if err != nil {
+		root.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
+			return err
+		}
+	} else {
+		root.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
+			return validateGlobalOptions(config, options)
+		}
 	}
 
 	root.AddCommand(newVersionCommand(build))
@@ -105,15 +110,12 @@ func Execute(command *cobra.Command) ExitCode {
 	return exitCodeForError(err)
 }
 
-func validateGlobalOptions(options *globalOptions) error {
-	if envProfile := strings.TrimSpace(os.Getenv(profileEnvName)); envProfile != "" && options.Profile == "" {
-		options.Profile = envProfile
-	}
-	if envEnvironment := strings.TrimSpace(os.Getenv(environmentEnvName)); envEnvironment != "" {
-		if err := validateEnvironment(envEnvironment); err != nil {
+func validateGlobalOptions(config *cliConfig, options *globalOptions) error {
+	config.applyGlobalOptions(options)
+	if options.Environment != "" {
+		if err := validateEnvironment(options.Environment); err != nil {
 			return err
 		}
-		options.Environment = envEnvironment
 	}
 	switch options.Color {
 	case "auto", "always", "never":
