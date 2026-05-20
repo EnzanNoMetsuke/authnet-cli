@@ -4,7 +4,10 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +18,10 @@ const (
 	defaultTransactionListLimit = 25
 	maxTransactionListLimit     = 100
 	defaultTransactionLastRange = "24h"
+	defaultTransactionSortBy    = "timestamp"
+	defaultTransactionSortOrder = "descending"
+	transactionSortByEnvName    = "AUTHNET_TX_SORT_BY"
+	transactionSortOrderEnvName = "AUTHNET_TX_SORT_ORDER"
 )
 
 var nowFunc = time.Now
@@ -248,6 +255,8 @@ func newTransactionCommand() *cobra.Command {
 	list.Flags().StringVar(&listOptions.Last, "last", defaultTransactionLastRange, "relative range such as 24h, 7d, or 1w")
 	list.Flags().IntVar(&listOptions.Limit, "limit", defaultTransactionListLimit, "maximum transactions to return")
 	list.Flags().BoolVar(&listOptions.UTC, "utc", false, "show transaction timestamps in UTC")
+	list.Flags().StringVar(&listOptions.SortBy, "sort-by", "", "sort transactions by timestamp, transaction_id, or amount")
+	list.Flags().StringVar(&listOptions.SortOrder, "sort-order", "", "sort transactions ascending or descending")
 	transaction.AddCommand(list)
 
 	unsettled := &cobra.Command{
@@ -266,6 +275,8 @@ func newTransactionCommand() *cobra.Command {
 	}
 	unsettledList.Flags().IntVar(&unsettledOptions.Limit, "limit", defaultTransactionListLimit, "maximum transactions to return")
 	unsettledList.Flags().BoolVar(&unsettledOptions.UTC, "utc", false, "show transaction timestamps in UTC")
+	unsettledList.Flags().StringVar(&unsettledOptions.SortBy, "sort-by", "", "sort transactions by timestamp, transaction_id, or amount")
+	unsettledList.Flags().StringVar(&unsettledOptions.SortOrder, "sort-order", "", "sort transactions ascending or descending")
 	unsettled.AddCommand(unsettledList)
 	transaction.AddCommand(unsettled)
 
@@ -461,16 +472,20 @@ type customerProfileGetOptions struct {
 }
 
 type transactionListOptions struct {
-	From  string
-	To    string
-	Last  string
-	Limit int
-	UTC   bool
+	From      string
+	To        string
+	Last      string
+	Limit     int
+	UTC       bool
+	SortBy    string
+	SortOrder string
 }
 
 type transactionUnsettledListOptions struct {
-	Limit int
-	UTC   bool
+	Limit     int
+	UTC       bool
+	SortBy    string
+	SortOrder string
 }
 
 type profileListData struct {
@@ -747,6 +762,10 @@ func runTransactionList(cmd *cobra.Command, listOptions *transactionListOptions)
 	if err != nil {
 		return err
 	}
+	sortOptions, err := resolveTransactionSortOptions(cmd, listOptions.SortBy, listOptions.SortOrder)
+	if err != nil {
+		return err
+	}
 	resolvedRange, err := resolveTransactionTimeRange(*listOptions, nowFunc())
 	if err != nil {
 		return err
@@ -806,6 +825,7 @@ func runTransactionList(cmd *cobra.Command, listOptions *transactionListOptions)
 		}
 		data.Transactions = append(data.Transactions, transactionListItems(response.Transactions, batch.BatchID.String())...)
 	}
+	sortTransactionListItems(data.Transactions, sortOptions)
 	data.Pagination.ReturnedCount = len(data.Transactions)
 	data.Pagination.HasMore = len(data.Transactions) >= limit && len(data.Transactions) < transactionListPossibleCount(batches.BatchList)
 	return renderTransactionListResult(cmd, data)
@@ -813,6 +833,10 @@ func runTransactionList(cmd *cobra.Command, listOptions *transactionListOptions)
 
 func runTransactionUnsettledList(cmd *cobra.Command, listOptions *transactionUnsettledListOptions) error {
 	limit, err := normalizedTransactionListLimit(listOptions.Limit)
+	if err != nil {
+		return err
+	}
+	sortOptions, err := resolveTransactionSortOptions(cmd, listOptions.SortBy, listOptions.SortOrder)
 	if err != nil {
 		return err
 	}
@@ -853,6 +877,7 @@ func runTransactionUnsettledList(cmd *cobra.Command, listOptions *transactionUns
 	if !strings.EqualFold(response.Messages.ResultCode, "Ok") {
 		return renderTransactionListFailure(cmd, "transaction unsettled list", response.Messages.ResultCode, data)
 	}
+	sortTransactionListItems(data.Transactions, sortOptions)
 	return renderTransactionListResult(cmd, data)
 }
 
@@ -1255,6 +1280,184 @@ func normalizedTransactionListLimit(limit int) (int, error) {
 		return 0, newUsageError("--limit must be at most %d", maxTransactionListLimit)
 	}
 	return limit, nil
+}
+
+type transactionSortOptions struct {
+	By    string
+	Order string
+}
+
+func resolveTransactionSortOptions(cmd *cobra.Command, sortBy string, sortOrder string) (transactionSortOptions, error) {
+	sortBy, sortBySource, err := resolveTransactionSortValue(cmd, "sort-by", sortBy, transactionSortByEnvName, defaultTransactionSortBy)
+	if err != nil {
+		return transactionSortOptions{}, err
+	}
+	sortOrder, sortOrderSource, err := resolveTransactionSortValue(cmd, "sort-order", sortOrder, transactionSortOrderEnvName, defaultTransactionSortOrder)
+	if err != nil {
+		return transactionSortOptions{}, err
+	}
+	options := transactionSortOptions{
+		By:    strings.TrimSpace(sortBy),
+		Order: strings.TrimSpace(sortOrder),
+	}
+	switch options.By {
+	case "timestamp", "transaction_id", "amount":
+	default:
+		return transactionSortOptions{}, invalidTransactionSortByError(options.By, sortBySource)
+	}
+	switch options.Order {
+	case "ascending", "descending":
+	default:
+		return transactionSortOptions{}, invalidTransactionSortOrderError(options.Order, sortOrderSource)
+	}
+	return options, nil
+}
+
+func resolveTransactionSortValue(cmd *cobra.Command, flagName string, flagValue string, envName string, defaultValue string) (string, string, error) {
+	if cmd.Flags().Lookup(flagName).Changed {
+		return strings.TrimSpace(flagValue), "--" + flagName, nil
+	}
+	if envValue := strings.TrimSpace(os.Getenv(envName)); envValue != "" {
+		return envValue, envName, nil
+	}
+	preference, preferencePath, err := transactionSortPreference(flagName)
+	if err != nil {
+		return "", "", err
+	}
+	if preference != "" {
+		return preference, preferencePath, nil
+	}
+	return defaultValue, "default", nil
+}
+
+func transactionSortPreference(flagName string) (string, string, error) {
+	dir, err := authnetConfigDir()
+	if err != nil {
+		return "", "", err
+	}
+	configPath := filepath.Join(dir, profileConfigFileName)
+	file, err := loadPreferencesFile(configPath)
+	if err != nil {
+		return "", "", err
+	}
+	preferenceKey := "sort_by"
+	if flagName == "sort-order" {
+		preferenceKey = "sort_order"
+	}
+	value, ok := nestedStringPreference(file.Preferences, "transaction_list", preferenceKey)
+	if !ok {
+		return "", "", nil
+	}
+	return value, "preferences.transaction_list." + preferenceKey + " in " + configPath, nil
+}
+
+func invalidTransactionSortByError(value string, source string) error {
+	switch source {
+	case "--sort-by":
+		return newUsageError("invalid --sort-by value %q: expected timestamp, transaction_id, or amount", value)
+	case transactionSortByEnvName:
+		return newUsageError("invalid AUTHNET_TX_SORT_BY value %q: expected timestamp, transaction_id, or amount", value)
+	default:
+		return newExitingUsageError("invalid %s value %q: expected timestamp, transaction_id, or amount", source, value)
+	}
+}
+
+func invalidTransactionSortOrderError(value string, source string) error {
+	switch source {
+	case "--sort-order":
+		return newUsageError("invalid --sort-order value %q: expected ascending or descending", value)
+	case transactionSortOrderEnvName:
+		return newUsageError("invalid AUTHNET_TX_SORT_ORDER value %q: expected ascending or descending", value)
+	default:
+		return newExitingUsageError("invalid %s value %q: expected ascending or descending", source, value)
+	}
+}
+
+func sortTransactionListItems(items []transactionListItem, options transactionSortOptions) {
+	sort.SliceStable(items, func(leftIndex, rightIndex int) bool {
+		left := items[leftIndex]
+		right := items[rightIndex]
+		cmp := compareTransactionPrimarySort(left, right, options.By)
+		if cmp == 0 {
+			cmp = strings.Compare(left.TransactionID, right.TransactionID)
+			return cmp > 0
+		}
+		if options.Order == "ascending" {
+			return cmp < 0
+		}
+		return cmp > 0
+	})
+}
+
+func compareTransactionPrimarySort(left transactionListItem, right transactionListItem, sortBy string) int {
+	switch sortBy {
+	case "transaction_id":
+		return strings.Compare(left.TransactionID, right.TransactionID)
+	case "amount":
+		return compareOptionalFloat(left.SettleAmount, right.SettleAmount)
+	default:
+		return compareOptionalTime(firstNonEmpty(left.SubmitTimeUTC, left.SubmitTimeLocal), firstNonEmpty(right.SubmitTimeUTC, right.SubmitTimeLocal))
+	}
+}
+
+func compareOptionalTime(left string, right string) int {
+	leftTime, leftOK := parseTransactionSortTime(left)
+	rightTime, rightOK := parseTransactionSortTime(right)
+	switch {
+	case !leftOK && !rightOK:
+		return 0
+	case !leftOK:
+		return 0
+	case !rightOK:
+		return 0
+	case leftTime.Before(rightTime):
+		return -1
+	case leftTime.After(rightTime):
+		return 1
+	default:
+		return 0
+	}
+}
+
+func parseTransactionSortTime(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func compareOptionalFloat(left string, right string) int {
+	leftAmount, leftOK := parseTransactionSortAmount(left)
+	rightAmount, rightOK := parseTransactionSortAmount(right)
+	switch {
+	case !leftOK && !rightOK:
+		return 0
+	case !leftOK:
+		return 0
+	case !rightOK:
+		return 0
+	case leftAmount < rightAmount:
+		return -1
+	case leftAmount > rightAmount:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func parseTransactionSortAmount(value string) (float64, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	amount, err := strconv.ParseFloat(value, 64)
+	return amount, err == nil
 }
 
 type resolvedTransactionTimeRange struct {
