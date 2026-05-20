@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -164,8 +165,7 @@ func invalidColorValueError(cmd *cobra.Command, config *cliConfig, color string)
 }
 
 func isColorEnvironmentOverrideSet() bool {
-	_, ok := os.LookupEnv("AUTHNET_COLOR")
-	return ok
+	return strings.TrimSpace(os.Getenv("AUTHNET_COLOR")) != ""
 }
 
 func optionsFromCommand(cmd *cobra.Command) *globalOptions {

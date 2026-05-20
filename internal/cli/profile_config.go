@@ -173,7 +173,7 @@ func stringPreference(preferences map[string]any, key string) (string, bool) {
 	}
 	text, ok := value.(string)
 	if !ok {
-		return "", true
+		return strings.TrimSpace(fmt.Sprint(value)), true
 	}
 	return strings.TrimSpace(text), true
 }
@@ -326,7 +326,7 @@ func validatePreferences(result validationResult, preferences map[string]any) va
 		result.Checks = append(result.Checks, checkRow{"preference color", "passed", "color preference is valid"})
 	default:
 		result.Valid = false
-		result.Checks = append(result.Checks, checkRow{"preference color", "failed", "invalid preference color: expected auto, always, or never"})
+		result.Checks = append(result.Checks, checkRow{"preference color", "failed", fmt.Sprintf("invalid preference color %q: expected auto, always, or never", color)})
 	}
 	return result
 }
