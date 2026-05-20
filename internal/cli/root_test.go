@@ -16,6 +16,29 @@ import (
 	"time"
 )
 
+func TestMain(m *testing.M) {
+	for _, env := range os.Environ() {
+		name, _, _ := strings.Cut(env, "=")
+		if strings.HasPrefix(name, "AUTHNET_") {
+			_ = os.Unsetenv(name)
+		}
+	}
+
+	configDir, err := os.MkdirTemp("", "authnet-cli-test-config-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "create isolated config directory: %v\n", err)
+		os.Exit(1)
+	}
+	if err := os.Setenv(configEnvName, configDir); err != nil {
+		fmt.Fprintf(os.Stderr, "set isolated config directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	code := m.Run()
+	_ = os.RemoveAll(configDir)
+	os.Exit(code)
+}
+
 func executeCommand(args ...string) (string, string, error) {
 	stdout, stderr, _, err := executeCommandWithInput("", args...)
 	return stdout, stderr, err
