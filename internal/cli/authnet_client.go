@@ -10,12 +10,13 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 )
 
 const defaultGatewayTimeout = 15 * time.Second
+
+const transactionKeyMaxLength = 16
 
 var (
 	sandboxAPIEndpoint    = "https://apitest.authorize.net/xml/v1/request.api"
@@ -641,8 +642,8 @@ func loadSelectedProfileWithCredentials(options *globalOptions, commandName stri
 func credentialsForProfile(profile profileEntry, commandName string) (authCredentials, error) {
 	switch profile.CredentialSource.Type {
 	case credentialSourceEnv:
-		loginID := os.Getenv(profile.CredentialSource.APILoginIDEnv)
-		transactionKey := os.Getenv(profile.CredentialSource.TransactionKeyEnv)
+		loginID := strings.TrimSpace(configuredEnvironmentValue(profile.CredentialSource.APILoginIDEnv))
+		transactionKey := strings.TrimSpace(configuredEnvironmentValue(profile.CredentialSource.TransactionKeyEnv))
 		missing := []string{}
 		if loginID == "" {
 			missing = append(missing, profile.CredentialSource.APILoginIDEnv)
@@ -652,6 +653,9 @@ func credentialsForProfile(profile profileEntry, commandName string) (authCreden
 		}
 		if len(missing) > 0 {
 			return authCredentials{}, newUsageError("missing credential environment variables: %s", strings.Join(missing, ", "))
+		}
+		if len(transactionKey) > transactionKeyMaxLength {
+			return authCredentials{}, newUsageError("transaction key from %s is too long: expected at most %d characters", profile.CredentialSource.TransactionKeyEnv, transactionKeyMaxLength)
 		}
 		return authCredentials{
 			APILoginID:     loginID,

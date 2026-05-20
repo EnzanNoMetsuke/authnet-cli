@@ -240,8 +240,8 @@ func validateCredentialAvailability(result validationResult, profile profileEntr
 		result.Checks = append(result.Checks, checkRow{"credential source " + profile.Name, "passed", "secure local credential reference is configured"})
 		return result
 	}
-	loginPresent := os.Getenv(profile.CredentialSource.APILoginIDEnv) != ""
-	keyPresent := os.Getenv(profile.CredentialSource.TransactionKeyEnv) != ""
+	loginPresent := strings.TrimSpace(configuredEnvironmentValue(profile.CredentialSource.APILoginIDEnv)) != ""
+	keyPresent := strings.TrimSpace(configuredEnvironmentValue(profile.CredentialSource.TransactionKeyEnv)) != ""
 	if loginPresent && keyPresent {
 		result.Checks = append(result.Checks, checkRow{"credential source " + profile.Name, "passed", "credential environment variables are available"})
 		return result
@@ -320,12 +320,5 @@ func sortProfiles(profiles []profileEntry) {
 }
 
 func authnetConfigDir() (string, error) {
-	if override := strings.TrimSpace(os.Getenv(configEnvName)); override != "" {
-		return override, nil
-	}
-	configDir, err := os.UserConfigDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve user config directory: %w", err)
-	}
-	return filepath.Join(configDir, "authnet-cli"), nil
+	return configuredAuthnetConfigDir()
 }

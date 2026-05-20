@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -417,9 +418,9 @@ func TestSandboxChargeRejectsProductionBeforeGatewayRequest(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 	t.Setenv(apiLoginIDEnvName, "prod-login")
 	t.Setenv(transactionKeyEnvName, "prod-key")
-	called := false
+	var called atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		called = true
+		called.Store(true)
 	}))
 	t.Cleanup(server.Close)
 	withGatewayTestEndpoint(t, environmentProduction, server.URL)
@@ -435,7 +436,7 @@ func TestSandboxChargeRejectsProductionBeforeGatewayRequest(t *testing.T) {
 	if code != exitSafetyDenied {
 		t.Fatalf("expected safety denied exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
-	if called {
+	if called.Load() {
 		t.Fatal("production sandbox charge unexpectedly contacted gateway")
 	}
 	assertContains(t, stdout, `"code": "safety_policy_denied"`)
@@ -697,6 +698,130 @@ func TestAuthTestMapsAuthenticationFailure(t *testing.T) {
 	assertContains(t, stdout, redactedValue)
 	assertNotContains(t, stdout, "secret-login")
 	assertNotContains(t, stdout, "secret-key")
+}
+
+func TestAuthTestRejectsOverlengthTransactionKeyBeforeGatewayRequest(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "prod-login")
+	t.Setenv(transactionKeyEnvName, "XXXXXXXXXXXXXXXXX")
+	var called atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		called.Store(true)
+	}))
+	t.Cleanup(server.Close)
+	withGatewayTestEndpoint(t, environmentProduction, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "prod-fake", "--environment", "production")
+	if err != nil {
+		t.Fatalf("expected production profile setup to succeed: %v", err)
+	}
+
+	stdout, stderr, code, err := executeCommandWithExit("--json", "--profile", "prod-fake", "auth", "test")
+	if err == nil {
+		t.Fatal("expected overlength transaction key to fail locally")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if called.Load() {
+		t.Fatal("overlength transaction key unexpectedly contacted gateway")
+	}
+	assertContains(t, stdout, `"code": "usage_or_config_error"`)
+	assertContains(t, stdout, "transaction key from AUTHNET_TRANSACTION_KEY is too long")
+	assertContains(t, stdout, "expected at most 16 characters")
+	assertNotContains(t, stdout, "XXXXXXXXXXXXXXXXX")
+}
+
+func TestAuthTestTrimsCredentialEnvValuesBeforeValidationAndRequest(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "\tprod-login\n")
+	t.Setenv(transactionKeyEnvName, " SECRETKEY1234567\n")
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		text := string(body)
+		assertContains(t, text, `"name":"prod-login"`)
+		assertContains(t, text, `"transactionKey":"SECRETKEY1234567"`)
+		assertNotContains(t, text, "\tprod-login")
+		assertNotContains(t, text, " SECRETKEY1234567")
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte(`{
+			"messages": {
+				"resultCode": "Ok",
+				"message": [{"code": "I00001", "text": "Successful."}]
+			}
+		}`))
+	}))
+	t.Cleanup(server.Close)
+	withGatewayTestEndpoint(t, environmentProduction, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "prod-file-sourced", "--environment", "production")
+	if err != nil {
+		t.Fatalf("expected production profile setup to succeed: %v", err)
+	}
+
+	stdout, stderr, err := executeCommand("--json", "--profile", "prod-file-sourced", "auth", "test")
+	if err != nil {
+		t.Fatalf("expected trimmed credentials to authenticate: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"authenticated": true`)
+}
+
+func TestAuthTestRedactsCredentialEchoesInHumanFailureOutput(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "prod-login")
+	t.Setenv(transactionKeyEnvName, "SECRETKEY1234567")
+	server := newAuthTestServer(t, http.StatusOK, `{
+		"messages": {
+			"resultCode": "Error",
+			"message": [{"code": "E00003", "text": "The 'transactionKey' element is invalid - The value SECRETKEY1234567 is invalid according to its datatype 'String'."}]
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentProduction, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "prod-fake", "--environment", "production")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("--profile", "prod-fake", "auth", "test")
+	if err != nil {
+		t.Fatalf("expected human auth failure to be shell-safe: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	if code != exitSuccess {
+		t.Fatalf("expected human auth failure to return shell-safe success, got %d", code)
+	}
+	assertContains(t, stdout, redactedValue)
+	assertNotContains(t, stdout, "SECRETKEY1234567")
+}
+
+func TestAuthTestRedactsTrimmedCredentialEchoesInJSONFailureOutput(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "prod-login")
+	t.Setenv(transactionKeyEnvName, " SECRETKEY1234567\n")
+	server := newAuthTestServer(t, http.StatusOK, `{
+		"messages": {
+			"resultCode": "Error",
+			"message": [{"code": "E00003", "text": "The 'transactionKey' element is invalid - The value SECRETKEY1234567 is invalid according to its datatype 'String'."}]
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentProduction, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "prod-fake", "--environment", "production")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("--json", "--profile", "prod-fake", "auth", "test")
+	if err == nil {
+		t.Fatal("expected JSON auth failure")
+	}
+	if code != exitAuthFailure {
+		t.Fatalf("expected auth failure exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, redactedValue)
+	assertNotContains(t, stdout, "SECRETKEY1234567")
 }
 
 func TestAuthTestReportsConfigurationFailure(t *testing.T) {
@@ -1638,6 +1763,26 @@ func TestConfigValidateReportsMissingCredentialSources(t *testing.T) {
 	assertContains(t, stdout, "MISSING_LOGIN, MISSING_KEY")
 }
 
+func TestConfigValidateTreatsWhitespaceOnlyCredentialSourcesAsMissing(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv("BLANK_LOGIN", " \n\t")
+	t.Setenv("BLANK_KEY", "    ")
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--api-login-id-env", "BLANK_LOGIN", "--transaction-key-env", "BLANK_KEY")
+	if err != nil {
+		t.Fatalf("expected setup with credential references to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("--json", "config", "validate")
+	if err == nil {
+		t.Fatal("expected config validate to fail with whitespace-only credential sources")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "profile_config_invalid"`)
+	assertContains(t, stdout, "BLANK_LOGIN, BLANK_KEY")
+}
+
 func TestConfigValidateHumanInvalidDoesNotFailShell(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 
@@ -1681,6 +1826,92 @@ func TestEnvironmentOverridesAppearInJSONEnvelope(t *testing.T) {
 	}
 	assertContains(t, stdout, `"profile_name": "env-profile"`)
 	assertContains(t, stdout, `"environment_classification": "sandbox"`)
+}
+
+func TestGlobalProfilePrecedenceUsesFlagsEnvironmentProfileConfigAndDefaults(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "dummy-login")
+	t.Setenv(transactionKeyEnvName, "dummy-key")
+	sandboxServer := newAuthTestServer(t, http.StatusOK, `{
+		"messages": {
+			"resultCode": "Ok",
+			"message": [{"code": "I00001", "text": "Successful."}]
+		}
+	}`)
+	productionServer := newAuthTestServer(t, http.StatusOK, `{
+		"messages": {
+			"resultCode": "Ok",
+			"message": [{"code": "I00001", "text": "Successful."}]
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, sandboxServer.URL)
+	withGatewayTestEndpoint(t, environmentProduction, productionServer.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-default", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected sandbox default setup to succeed: %v", err)
+	}
+	_, _, err = executeCommand("--automation", "profile", "setup", "--name", "sandbox-env", "--environment", "sandbox")
+	if err != nil {
+		t.Fatalf("expected sandbox env setup to succeed: %v", err)
+	}
+	_, _, err = executeCommand("--automation", "profile", "setup", "--name", "prod-flag", "--environment", "production")
+	if err != nil {
+		t.Fatalf("expected production flag setup to succeed: %v", err)
+	}
+
+	stdout, _, err := executeCommand("--json", "auth", "test")
+	if err != nil {
+		t.Fatalf("expected profile config default to resolve: %v", err)
+	}
+	assertContains(t, stdout, `"profile_name": "sandbox-default"`)
+	assertContains(t, stdout, `"environment_classification": "sandbox"`)
+
+	t.Setenv(profileEnvName, "sandbox-env")
+	stdout, _, err = executeCommand("--json", "auth", "test")
+	if err != nil {
+		t.Fatalf("expected environment profile override to resolve: %v", err)
+	}
+	assertContains(t, stdout, `"profile_name": "sandbox-env"`)
+
+	stdout, _, err = executeCommand("--json", "--profile", "prod-flag", "auth", "test")
+	if err != nil {
+		t.Fatalf("expected command-line profile override to resolve: %v", err)
+	}
+	assertContains(t, stdout, `"profile_name": "prod-flag"`)
+	assertContains(t, stdout, `"environment_classification": "production"`)
+}
+
+func TestRawResponseProductionProfileIsDeniedBeforeGatewayRequest(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "prod-login")
+	t.Setenv(transactionKeyEnvName, "prod-key")
+	var called atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		called.Store(true)
+	}))
+	t.Cleanup(server.Close)
+	withGatewayTestEndpoint(t, environmentProduction, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "prod-main", "--environment", "production")
+	if err != nil {
+		t.Fatalf("expected production profile setup to succeed: %v", err)
+	}
+
+	stdout, stderr, code, err := executeCommandWithExit("--json", "--raw-response", "--profile", "prod-main", "auth", "test")
+	if err == nil {
+		t.Fatal("expected production raw-response auth test to fail")
+	}
+	if code != exitSafetyDenied {
+		t.Fatalf("expected safety denied exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if called.Load() {
+		t.Fatal("production raw-response request unexpectedly contacted gateway")
+	}
+	assertContains(t, stdout, `"code": "safety_policy_denied"`)
+	assertContains(t, stdout, "raw response mode is unavailable for production-classified profiles")
 }
 
 func TestRawResponseModeRequiresSandboxClassification(t *testing.T) {
