@@ -34,8 +34,8 @@ done
 
 check_required_readme_text() {
   text="$1"
-  if ! grep -F "$text" README.md >/dev/null; then
-    echo "required README macOS unsigned-binary note missing: $text" >&2
+  if ! grep -F -- "$text" README.md >/dev/null; then
+    echo "required README text missing: $text" >&2
     exit 1
   fi
 }
