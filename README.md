@@ -25,6 +25,12 @@ make build
 
 GitHub Releases are the canonical release source for v1, with checksums and an initial Homebrew tap path. Until the first tag is published, local builds are the supported install path. See the [release process](docs/release.md) for artifact, checksum, changelog, and Homebrew tap details.
 
+`authnet` is currently unsigned and not notarized on macOS. macOS may block first launch of a downloaded release binary. Verify the release checksum before removing quarantine metadata. If you choose to trust the installed `authnet` binary after verification, remove the quarantine attribute with:
+
+```sh
+xattr -dr com.apple.quarantine "$(realpath "$(command -v authnet)")"
+```
+
 ## V1 Command Scope
 
 Canonical v1 command surfaces:
