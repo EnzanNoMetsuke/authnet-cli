@@ -891,6 +891,34 @@ func TestAuthTestRawResponseHumanOutputPrintsGatewayResponse(t *testing.T) {
 	assertNotContains(t, stdout, "authentication: ok")
 }
 
+func TestAuthTestRawResponsePreservesAuthenticationFailureExit(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newAuthTestServer(t, http.StatusOK, `{
+		"messages": {
+			"resultCode": "Error",
+			"message": [{"code": "E00007", "text": "secret-login rejected."}]
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("--raw-response", "auth", "test")
+	if err == nil {
+		t.Fatal("expected raw auth failure to return a nonzero exit")
+	}
+	if code != exitAuthFailure {
+		t.Fatalf("expected auth failure exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"resultCode": "Error"`)
+	assertContains(t, stdout, "secret-login rejected.")
+	assertNotContains(t, stdout, "authentication: failed")
+}
+
 func TestAuthTestRawResponseJSONRejectsInvalidGatewayJSON(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 	t.Setenv(apiLoginIDEnvName, "secret-login")
@@ -1248,6 +1276,36 @@ func TestTransactionGetRawResponseEmitsSandboxGatewayResponse(t *testing.T) {
 	assertContains(t, stdout, `"raw_gateway_response": {`)
 	assertContains(t, stdout, `"email": "customer@example.test"`)
 	assertNotContains(t, stdout, `"transaction_status": "settledSuccessfully"`)
+}
+
+func TestTransactionGetRawResponsePreservesNotFoundExit(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newTransactionTestServer(t, http.StatusOK, "missing-trans", `{
+		"messages": {
+			"resultCode": "Error",
+			"message": [{"code": "E00040", "text": "The record cannot be found."}]
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("--json", "--raw-response", "transaction", "get", "missing-trans")
+	if err == nil {
+		t.Fatal("expected raw transaction lookup failure to return a nonzero exit")
+	}
+	if code != exitNotFound {
+		t.Fatalf("expected not found exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"redacted": false`)
+	assertContains(t, stdout, `"raw_gateway_response": {`)
+	assertContains(t, stdout, `"code": "E00040"`)
+	assertContains(t, stdout, "The record cannot be found.")
+	assertNotContains(t, stdout, `"code": "transaction_not_found"`)
 }
 
 func TestTransactionGetUsesProductionEndpointForExplicitProductionProfile(t *testing.T) {

@@ -652,11 +652,22 @@ func runAuthTest(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if options.RawResponse {
-		return renderRawGatewayResponse(cmd, rawResponse)
-	}
 
 	message := firstGatewayMessage(response.Messages.Message)
+	if options.RawResponse {
+		if renderErr := renderRawGatewayResponse(cmd, rawResponse); renderErr != nil {
+			return renderErr
+		}
+		if !strings.EqualFold(response.Messages.ResultCode, "Ok") {
+			failureMessage := message.Text
+			if failureMessage == "" {
+				failureMessage = "authentication response did not include a message"
+			}
+			return renderedError{exitCode: exitAuthFailure, message: failureMessage, forceExit: true}
+		}
+		return nil
+	}
+
 	data := authTestData{
 		Authenticated:             strings.EqualFold(response.Messages.ResultCode, "Ok"),
 		ProfileName:               profile.Entry.Name,
@@ -751,9 +762,6 @@ func runTransactionGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if options.RawResponse {
-		return renderRawGatewayResponse(cmd, rawResponse)
-	}
 
 	message := firstGatewayMessage(response.Messages.Message)
 	data := transactionLookupData{
@@ -763,6 +771,20 @@ func runTransactionGet(cmd *cobra.Command, args []string) error {
 		GatewayMessageCode:        message.Code,
 		Message:                   message.Text,
 	}
+	if options.RawResponse {
+		if renderErr := renderRawGatewayResponse(cmd, rawResponse); renderErr != nil {
+			return renderErr
+		}
+		if !strings.EqualFold(response.Messages.ResultCode, "Ok") {
+			if data.Message == "" {
+				data.Message = "transaction lookup failed"
+			}
+			_, exitCode := gatewayFailureMapping(data.GatewayMessageCode, data.Message, "transaction_not_found")
+			return renderedError{exitCode: exitCode, message: data.Message, forceExit: true}
+		}
+		return nil
+	}
+
 	if !strings.EqualFold(response.Messages.ResultCode, "Ok") {
 		return renderTransactionLookupFailure(cmd, response.Messages.ResultCode, data)
 	}

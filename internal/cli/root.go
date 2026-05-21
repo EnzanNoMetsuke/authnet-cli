@@ -114,9 +114,13 @@ func execute(command *cobra.Command) ExitCode {
 			return exiting.exitCode
 		}
 		var rendered renderedError
-		if !errors.As(err, &rendered) {
-			_, _ = target.ErrOrStderr().Write([]byte(err.Error() + "\n"))
+		if errors.As(err, &rendered) {
+			if rendered.forceExit {
+				return rendered.exitCode
+			}
+			return exitSuccess
 		}
+		_, _ = target.ErrOrStderr().Write([]byte(err.Error() + "\n"))
 		return exitSuccess
 	}
 
