@@ -32,6 +32,18 @@ for link in $required_links; do
   fi
 done
 
+check_required_readme_text() {
+  text="$1"
+  if ! grep -F "$text" README.md >/dev/null; then
+    echo "required README macOS unsigned-binary note missing: $text" >&2
+    exit 1
+  fi
+}
+
+check_required_readme_text '`authnet` is currently unsigned and not notarized on macOS'
+check_required_readme_text 'Verify the release checksum before removing quarantine metadata'
+check_required_readme_text 'xattr -dr com.apple.quarantine "$(realpath "$(command -v authnet)")"'
+
 required_commands="
 authnet --version
 authnet version
