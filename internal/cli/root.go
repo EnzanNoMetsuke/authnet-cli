@@ -13,8 +13,14 @@ import (
 type contextKey string
 
 const (
-	optionsContextKey contextKey = "options"
-	buildContextKey   contextKey = "build"
+	optionsContextKey            contextKey = "options"
+	buildContextKey              contextKey = "build"
+	rawResponseSupportAnnotation            = "authnet.raw_response"
+)
+
+const (
+	rawResponseProductionSafetyMessage = "raw response mode is unavailable for production-classified profiles"
+	rawResponseSandboxRequiredMessage  = "raw response mode requires a sandbox-classified profile or AUTHNET_ENVIRONMENT=sandbox"
 )
 
 type globalOptions struct {
@@ -108,9 +114,13 @@ func execute(command *cobra.Command) ExitCode {
 			return exiting.exitCode
 		}
 		var rendered renderedError
-		if !errors.As(err, &rendered) {
-			_, _ = target.ErrOrStderr().Write([]byte(err.Error() + "\n"))
+		if errors.As(err, &rendered) {
+			if rendered.forceExit {
+				return rendered.exitCode
+			}
+			return exitSuccess
 		}
+		_, _ = target.ErrOrStderr().Write([]byte(err.Error() + "\n"))
 		return exitSuccess
 	}
 
@@ -228,10 +238,27 @@ func validateGlobalOptions(cmd *cobra.Command, config *cliConfig, options *globa
 	if err := resolveProfileEnvironment(options); err != nil {
 		return err
 	}
-	if options.RawResponse && options.Environment != environmentSandbox {
-		return newSafetyDeniedError("raw response mode requires a sandbox-classified profile or AUTHNET_ENVIRONMENT=sandbox")
+	if options.RawResponse {
+		if options.Environment == environmentProduction {
+			return newSafetyDeniedError(rawResponseProductionSafetyMessage)
+		}
+		if !commandSupportsRawResponse(cmd) {
+			return newUsageError("raw response mode is not supported for %s", cmd.CommandPath())
+		}
+		if options.Environment != environmentSandbox {
+			return newSafetyDeniedError(rawResponseSandboxRequiredMessage)
+		}
 	}
 	return nil
+}
+
+func commandSupportsRawResponse(cmd *cobra.Command) bool {
+	for current := cmd; current != nil; current = current.Parent() {
+		if current.Annotations != nil && current.Annotations[rawResponseSupportAnnotation] == "supported" {
+			return true
+		}
+	}
+	return false
 }
 
 func commandUsesPreferences(cmd *cobra.Command) bool {

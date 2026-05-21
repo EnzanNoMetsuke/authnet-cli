@@ -842,6 +842,106 @@ func TestAuthTestSucceedsWithMockGateway(t *testing.T) {
 	assertNotContains(t, stdout, "secret-key")
 }
 
+func TestAuthTestRawResponseEmitsSandboxGatewayResponse(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newAuthTestServer(t, http.StatusOK, `{
+		"messages": {
+			"resultCode": "Ok",
+			"message": [{"code": "I00001", "text": "secret-login was accepted."}]
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "--raw-response", "auth", "test")
+	if err != nil {
+		t.Fatalf("expected raw auth test to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"command": "authnet auth test"`)
+	assertContains(t, stdout, `"redacted": false`)
+	assertContains(t, stdout, `"raw_gateway_response": {`)
+	assertContains(t, stdout, `"text": "secret-login was accepted."`)
+	assertNotContains(t, stdout, `"authenticated": true`)
+}
+
+func TestAuthTestRawResponseHumanOutputPrintsGatewayResponse(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newAuthTestServer(t, http.StatusOK, `{"messages":{"resultCode":"Ok","message":[{"code":"I00001","text":"secret-login was accepted."}]}}`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--raw-response", "auth", "test")
+	if err != nil {
+		t.Fatalf("expected raw auth test to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"messages":{"resultCode":"Ok"`)
+	assertContains(t, stdout, "secret-login was accepted.")
+	assertNotContains(t, stdout, "authentication: ok")
+}
+
+func TestAuthTestRawResponsePreservesAuthenticationFailureExit(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newAuthTestServer(t, http.StatusOK, `{
+		"messages": {
+			"resultCode": "Error",
+			"message": [{"code": "E00007", "text": "secret-login rejected."}]
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("--raw-response", "auth", "test")
+	if err == nil {
+		t.Fatal("expected raw auth failure to return a nonzero exit")
+	}
+	if code != exitAuthFailure {
+		t.Fatalf("expected auth failure exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"resultCode": "Error"`)
+	assertContains(t, stdout, "secret-login rejected.")
+	assertNotContains(t, stdout, "authentication: failed")
+}
+
+func TestAuthTestRawResponseJSONRejectsInvalidGatewayJSON(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newAuthTestServer(t, http.StatusOK, `{"messages":{"resultCode":"Ok","message":[{"code":"I00001","text":"Successful."}]}}<html>gateway error</html>`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("--json", "--raw-response", "auth", "test")
+	if err == nil {
+		t.Fatal("expected invalid raw gateway JSON to fail")
+	}
+	if code != exitGatewayFailure {
+		t.Fatalf("expected gateway failure exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "gateway_response_invalid"`)
+	assertContains(t, stdout, "Authorize.Net returned an invalid JSON raw gateway response")
+	assertNotContains(t, stdout, "<html>gateway error</html>")
+}
+
 func TestAuthTestUsesProductionEndpointForProductionProfile(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 	t.Setenv(apiLoginIDEnvName, "secret-login")
@@ -1141,6 +1241,71 @@ func TestTransactionGetSucceedsWithMockGateway(t *testing.T) {
 	assertNotContains(t, stdout, "secret-login")
 	assertNotContains(t, stdout, "secret-key")
 	assertNotContains(t, stdout, "customer@example.test")
+}
+
+func TestTransactionGetRawResponseEmitsSandboxGatewayResponse(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newTransactionTestServer(t, http.StatusOK, "1234567890", `{
+		"messages": {
+			"resultCode": "Ok",
+			"message": [{"code": "I00001", "text": "Successful."}]
+		},
+		"transaction": {
+			"transId": "1234567890",
+			"transactionStatus": "settledSuccessfully",
+			"billTo": {
+				"email": "customer@example.test"
+			}
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "--raw-response", "transaction", "get", "1234567890")
+	if err != nil {
+		t.Fatalf("expected raw transaction get to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"command": "authnet transaction get"`)
+	assertContains(t, stdout, `"redacted": false`)
+	assertContains(t, stdout, `"raw_gateway_response": {`)
+	assertContains(t, stdout, `"email": "customer@example.test"`)
+	assertNotContains(t, stdout, `"transaction_status": "settledSuccessfully"`)
+}
+
+func TestTransactionGetRawResponsePreservesNotFoundExit(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newTransactionTestServer(t, http.StatusOK, "missing-trans", `{
+		"messages": {
+			"resultCode": "Error",
+			"message": [{"code": "E00040", "text": "The record cannot be found."}]
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, code, err := executeCommandWithExit("--json", "--raw-response", "transaction", "get", "missing-trans")
+	if err == nil {
+		t.Fatal("expected raw transaction lookup failure to return a nonzero exit")
+	}
+	if code != exitNotFound {
+		t.Fatalf("expected not found exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"redacted": false`)
+	assertContains(t, stdout, `"raw_gateway_response": {`)
+	assertContains(t, stdout, `"code": "E00040"`)
+	assertContains(t, stdout, "The record cannot be found.")
+	assertNotContains(t, stdout, `"code": "transaction_not_found"`)
 }
 
 func TestTransactionGetUsesProductionEndpointForExplicitProductionProfile(t *testing.T) {
@@ -2902,6 +3067,13 @@ func TestRawResponseModeRequiresSandboxClassification(t *testing.T) {
 	t.Setenv(configEnvName, configDir)
 	t.Setenv(apiLoginIDEnvName, "dummy-login")
 	t.Setenv(transactionKeyEnvName, "dummy-key")
+	server := newAuthTestServer(t, http.StatusOK, `{
+		"messages": {
+			"resultCode": "Ok",
+			"message": [{"code": "I00001", "text": "Successful."}]
+		}
+	}`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
 
 	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
 	if err != nil {
@@ -2912,7 +3084,7 @@ func TestRawResponseModeRequiresSandboxClassification(t *testing.T) {
 		t.Fatalf("expected production profile setup to succeed: %v", err)
 	}
 
-	stdout, _, err := executeCommand("--json", "--raw-response", "--profile", "sandbox-main", "version")
+	stdout, _, err := executeCommand("--json", "--raw-response", "--profile", "sandbox-main", "auth", "test")
 	if err != nil {
 		t.Fatalf("expected sandbox raw-response request to pass safety gate: %v", err)
 	}
@@ -2928,6 +3100,55 @@ func TestRawResponseModeRequiresSandboxClassification(t *testing.T) {
 	}
 	assertContains(t, stdout, `"code": "safety_policy_denied"`)
 	assertContains(t, stdout, "raw response mode is unavailable for production-classified profiles")
+}
+
+func TestRawResponseExplicitProductionEnvironmentUsesProductionSpecificSafetyMessage(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(environmentEnvName, environmentProduction)
+	t.Setenv(apiLoginIDEnvName, "dummy-login")
+	t.Setenv(transactionKeyEnvName, "dummy-key")
+
+	stdout, stderr, code, err := executeCommandWithExit("--json", "--raw-response", "auth", "test")
+	if err == nil {
+		t.Fatal("expected production raw-response request to fail")
+	}
+	if code != exitSafetyDenied {
+		t.Fatalf("expected safety denied exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "safety_policy_denied"`)
+	assertContains(t, stdout, "raw response mode is unavailable for production-classified profiles")
+}
+
+func TestRawResponseUnsupportedCommandFailsClearly(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "dummy-login")
+	t.Setenv(transactionKeyEnvName, "dummy-key")
+
+	stdout, stderr, code, err := executeCommandWithExit("--json", "--raw-response", "version")
+	if err == nil {
+		t.Fatal("expected unsupported raw-response command without profile to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "usage_or_config_error"`)
+	assertContains(t, stdout, "raw response mode is not supported for authnet version")
+
+	_, _, err = executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected sandbox profile setup to succeed: %v", err)
+	}
+
+	stdout, stderr, code, err = executeCommandWithExit("--json", "--raw-response", "--profile", "sandbox-main", "version")
+	if err == nil {
+		t.Fatal("expected unsupported raw-response command to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "usage_or_config_error"`)
+	assertContains(t, stdout, "raw response mode is not supported for authnet version")
 }
 
 func TestRedactionRemovesSyntheticSentinelsFromOutputs(t *testing.T) {

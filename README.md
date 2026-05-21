@@ -68,6 +68,15 @@ preferences:
 
 Supported color values are `auto`, `always`, and `never`. Transaction lists support `sort_by` values `timestamp`, `transaction_id`, and `amount`, plus `sort_order` values `ascending` and `descending`. Explicit flags such as `--color=always`, `--no-color`, `--sort-by`, and `--sort-order` override persisted preferences for one invocation. `AUTHNET_TX_SORT_BY` and `AUTHNET_TX_SORT_ORDER` override transaction list preferences when flags are not provided. `--automation` always forces JSON output with no color.
 
+Raw gateway response output is sandbox-only and explicit. Supported commands are:
+
+```sh
+authnet --raw-response --profile sandbox-main auth test
+authnet --raw-response --profile sandbox-main transaction get TRANSACTION_ID
+```
+
+Production profiles and unsupported commands are denied before raw gateway output is emitted.
+
 Sandbox charge helpers are sandbox-only and use test-card aliases instead of raw card-number entry:
 
 ```sh
