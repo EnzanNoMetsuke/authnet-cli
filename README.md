@@ -6,9 +6,17 @@
 
 `authnet-cli` is an Authorize.Net operations CLI. The executable is `authnet`.
 
-The project is in a pre-release `0.1.0` read-first alpha. The current goal is a safe operator-first command line tool for inspecting Authorize.Net state across sandbox and production profiles, with stable JSON output for automation and agents.
+The primary goal of this project is a safe, easy-to-use command line tool for inspecting Authorize.Net state across sandbox and production profiles, with well-formatted output for humans and stable JSON output for automation and agents.
 
-This is not an SDK wrapper, raw API tunnel, MCP server, or compliance product.
+**What it is:** A tool to help automate builds and integration tests, as well as allow human operators a convenient way to inspect and work with gateway data.
+
+**What it isn't:** An SDK wrapper, raw API tunnel, MCP server, or compliance product.
+
+To be clear:
+
+> `authnet-cli` makes no guarantees regarding compliance with PCI-DSS, GDPR or any other standard.
+
+That said, we do employ significant measures to make `authnet-cli` as safe as possible to use in any environment.
 
 ## Security
 
@@ -42,7 +50,7 @@ authnet --version
 
 See the [release process](docs/release.md) for artifact, checksum, changelog, and Homebrew tap details.
 
-`authnet` is currently unsigned and not notarized on macOS. macOS may block first launch of a downloaded release binary. Verify the release checksum before removing quarantine metadata. If you choose to trust the installed `authnet` binary after verification, remove the quarantine attribute with:
+**NOTE:** `authnet` is currently unsigned and not notarized on macOS. macOS may block first launch of a downloaded release binary. Verify the release checksum before removing quarantine metadata. If you choose to trust the installed `authnet` binary after verification, remove the quarantine attribute with:
 
 ```sh
 xattr -dr com.apple.quarantine "$(realpath "$(command -v authnet)")"
@@ -157,10 +165,11 @@ Supported color values are `auto`, `always`, and `never`. Transaction lists supp
 
 ## Local Development
 
-Build from the repository while the alpha is under active development:
+Clone the repository and build the binary:
 
 ```sh
-make build
+git clone https://github.com/EnzanNoMetsuke/authnet-cli.git
+cd authnet-cli && make build
 ./bin/authnet version
 ```
 
