@@ -2898,6 +2898,36 @@ func TestConfigMigrateWithExistingConfigRenamesStaleLegacyJSON(t *testing.T) {
 	}
 }
 
+func TestConfigMigratePreservesExistingDeprecatedBackup(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "sandbox-secret-login")
+	t.Setenv(transactionKeyEnvName, "sandbox-secret-key")
+	writeLegacyProfileConfig(t, configDir)
+	const retainedBackup = `{"profiles":[],"preferences":{"retained":true}}`
+	if err := os.WriteFile(filepath.Join(configDir, deprecatedProfileConfigFileName), []byte(retainedBackup), 0o600); err != nil {
+		t.Fatalf("expected to write retained deprecated backup fixture: %v", err)
+	}
+
+	stdout, stderr, err := executeCommand("config", "migrate")
+	if err != nil {
+		t.Fatalf("expected config migrate to preserve existing backup: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, "config migration completed")
+	assertContains(t, stderr, "warning: Could not rename profiles.json to DEPRECATED-profiles.json because DEPRECATED-profiles.json already exists")
+
+	backupBytes, err := os.ReadFile(filepath.Join(configDir, deprecatedProfileConfigFileName)) // #nosec G304 - test reads the command output from a t.TempDir config root.
+	if err != nil {
+		t.Fatalf("expected retained deprecated backup to remain readable: %v", err)
+	}
+	if string(backupBytes) != retainedBackup {
+		t.Fatalf("expected retained deprecated backup not to be overwritten\nwant:\n%s\ngot:\n%s", retainedBackup, backupBytes)
+	}
+	if _, err := os.Stat(filepath.Join(configDir, legacyProfileConfigFileName)); err != nil {
+		t.Fatalf("expected legacy profiles.json to remain for manual cleanup: %v", err)
+	}
+}
+
 func TestConfigMigrateRecoveryRequiresAutomationYes(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv(configEnvName, configDir)

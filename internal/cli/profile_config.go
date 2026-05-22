@@ -221,6 +221,17 @@ func (store profileStore) save(file profileFile) error {
 }
 
 func (store profileStore) renameLegacyBackup() warning {
+	if _, err := os.Stat(store.backupPath); err == nil {
+		return warning{
+			Code:    "config_migration_backup_rename_failed",
+			Message: "Could not rename profiles.json to DEPRECATED-profiles.json because DEPRECATED-profiles.json already exists; retained profiles.json for manual cleanup.",
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return warning{
+			Code:    "config_migration_backup_rename_failed",
+			Message: fmt.Sprintf("Could not inspect DEPRECATED-profiles.json before renaming profiles.json: %v", err),
+		}
+	}
 	if err := os.Rename(store.legacyPath, store.backupPath); err != nil {
 		return warning{
 			Code:    "config_migration_backup_rename_failed",
