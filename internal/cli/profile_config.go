@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -32,6 +33,10 @@ const (
 	defaultCredentialLoginEnv       = apiLoginIDEnvName
 	defaultCredentialTranKeyEnv     = transactionKeyEnvName
 )
+
+var unixTimestampNow = func() int64 {
+	return time.Now().Unix()
+}
 
 type profileStore struct {
 	dir        string
@@ -220,25 +225,45 @@ func (store profileStore) save(file profileFile) error {
 	return nil
 }
 
-func (store profileStore) renameLegacyBackup() warning {
+func (store profileStore) renameLegacyBackup() (string, warning) {
 	if _, err := os.Stat(store.backupPath); err == nil {
-		return warning{
-			Code:    "config_migration_backup_rename_failed",
-			Message: "Could not rename profiles.json to DEPRECATED-profiles.json because DEPRECATED-profiles.json already exists; retained profiles.json for manual cleanup.",
-		}
+		return store.renameLegacyBackupWithTimestamp()
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return warning{
+		return "", warning{
 			Code:    "config_migration_backup_rename_failed",
 			Message: fmt.Sprintf("Could not inspect DEPRECATED-profiles.json before renaming profiles.json: %v", err),
 		}
 	}
 	if err := os.Rename(store.legacyPath, store.backupPath); err != nil {
-		return warning{
+		return "", warning{
 			Code:    "config_migration_backup_rename_failed",
 			Message: fmt.Sprintf("Could not rename profiles.json to DEPRECATED-profiles.json: %v", err),
 		}
 	}
-	return warning{}
+	return store.backupPath, warning{}
+}
+
+func (store profileStore) renameLegacyBackupWithTimestamp() (string, warning) {
+	var lastErr error
+	for range 3 {
+		backupPath := filepath.Join(store.dir, fmt.Sprintf("DEPRECATED-%d-profiles.json", unixTimestampNow()))
+		if _, err := os.Stat(backupPath); err == nil {
+			lastErr = fmt.Errorf("%s already exists", filepath.Base(backupPath))
+			continue
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			lastErr = err
+			continue
+		}
+		if err := os.Rename(store.legacyPath, backupPath); err != nil {
+			lastErr = err
+			continue
+		}
+		return backupPath, warning{}
+	}
+	return "", warning{
+		Code:    "config_migration_backup_rename_failed",
+		Message: fmt.Sprintf("Could not rename profiles.json to a timestamped deprecated backup after 3 attempts: %v; retained profiles.json for manual cleanup.", lastErr),
+	}
 }
 
 func upsertProfile(file profileFile, profile profileEntry, defaultProfile bool) (profileFile, error) {

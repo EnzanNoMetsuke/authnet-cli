@@ -141,6 +141,32 @@ func writeDeprecatedProfileConfig(t *testing.T, configDir string) {
 	}
 }
 
+func stubUnixTimestampNow(timestamp int64) func() {
+	original := unixTimestampNow
+	unixTimestampNow = func() int64 {
+		return timestamp
+	}
+	return func() {
+		unixTimestampNow = original
+	}
+}
+
+func stubUnixTimestampSequence(timestamps ...int64) func() {
+	original := unixTimestampNow
+	index := 0
+	unixTimestampNow = func() int64 {
+		if index >= len(timestamps) {
+			return timestamps[len(timestamps)-1]
+		}
+		timestamp := timestamps[index]
+		index++
+		return timestamp
+	}
+	return func() {
+		unixTimestampNow = original
+	}
+}
+
 func writeValidProfileConfig(t *testing.T, configDir string) {
 	t.Helper()
 	configText := `version: 1
@@ -2908,13 +2934,16 @@ func TestConfigMigratePreservesExistingDeprecatedBackup(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(configDir, deprecatedProfileConfigFileName), []byte(retainedBackup), 0o600); err != nil {
 		t.Fatalf("expected to write retained deprecated backup fixture: %v", err)
 	}
+	restoreTimestamp := stubUnixTimestampNow(1779487408)
+	defer restoreTimestamp()
 
 	stdout, stderr, err := executeCommand("config", "migrate")
 	if err != nil {
 		t.Fatalf("expected config migrate to preserve existing backup: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
 	}
 	assertContains(t, stdout, "config migration completed")
-	assertContains(t, stderr, "warning: Could not rename profiles.json to DEPRECATED-profiles.json because DEPRECATED-profiles.json already exists")
+	assertContains(t, stdout, "legacy backup: "+filepath.Join(configDir, "DEPRECATED-1779487408-profiles.json"))
+	assertNotContains(t, stderr, "config_migration_backup_rename_failed")
 
 	backupBytes, err := os.ReadFile(filepath.Join(configDir, deprecatedProfileConfigFileName)) // #nosec G304 - test reads the command output from a t.TempDir config root.
 	if err != nil {
@@ -2923,6 +2952,71 @@ func TestConfigMigratePreservesExistingDeprecatedBackup(t *testing.T) {
 	if string(backupBytes) != retainedBackup {
 		t.Fatalf("expected retained deprecated backup not to be overwritten\nwant:\n%s\ngot:\n%s", retainedBackup, backupBytes)
 	}
+	if _, err := os.Stat(filepath.Join(configDir, legacyProfileConfigFileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected legacy profiles.json to be renamed, stat error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(configDir, "DEPRECATED-1779487408-profiles.json")); err != nil {
+		t.Fatalf("expected timestamped legacy backup to exist: %v", err)
+	}
+}
+
+func TestConfigMigrateRetriesTimestampedBackupNameCollision(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "sandbox-secret-login")
+	t.Setenv(transactionKeyEnvName, "sandbox-secret-key")
+	writeLegacyProfileConfig(t, configDir)
+	if err := os.WriteFile(filepath.Join(configDir, deprecatedProfileConfigFileName), []byte(`{"profiles":[]}`), 0o600); err != nil {
+		t.Fatalf("expected to write retained deprecated backup fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "DEPRECATED-1779487408-profiles.json"), []byte(`collision`), 0o600); err != nil {
+		t.Fatalf("expected to write colliding timestamped backup fixture: %v", err)
+	}
+	restoreTimestamp := stubUnixTimestampSequence(1779487408, 1779487409)
+	defer restoreTimestamp()
+
+	stdout, stderr, err := executeCommand("config", "migrate")
+	if err != nil {
+		t.Fatalf("expected config migrate to retry timestamped backup collision: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, "legacy backup: "+filepath.Join(configDir, "DEPRECATED-1779487409-profiles.json"))
+	assertNotContains(t, stderr, "config_migration_backup_rename_failed")
+	if _, err := os.Stat(filepath.Join(configDir, "DEPRECATED-1779487409-profiles.json")); err != nil {
+		t.Fatalf("expected retried timestamped legacy backup to exist: %v", err)
+	}
+	collisionBytes, err := os.ReadFile(filepath.Join(configDir, "DEPRECATED-1779487408-profiles.json")) // #nosec G304 - test reads the command output from a t.TempDir config root.
+	if err != nil {
+		t.Fatalf("expected colliding timestamped backup to remain readable: %v", err)
+	}
+	if string(collisionBytes) != "collision" {
+		t.Fatalf("expected colliding timestamped backup not to be overwritten, got %q", collisionBytes)
+	}
+}
+
+func TestConfigMigrateWarnsWhenTimestampedBackupRetriesFail(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "sandbox-secret-login")
+	t.Setenv(transactionKeyEnvName, "sandbox-secret-key")
+	writeLegacyProfileConfig(t, configDir)
+	if err := os.WriteFile(filepath.Join(configDir, deprecatedProfileConfigFileName), []byte(`{"profiles":[]}`), 0o600); err != nil {
+		t.Fatalf("expected to write retained deprecated backup fixture: %v", err)
+	}
+	for _, timestamp := range []int64{1779487408, 1779487409, 1779487410} {
+		name := fmt.Sprintf("DEPRECATED-%d-profiles.json", timestamp)
+		if err := os.WriteFile(filepath.Join(configDir, name), []byte(name), 0o600); err != nil {
+			t.Fatalf("expected to write colliding timestamped backup fixture: %v", err)
+		}
+	}
+	restoreTimestamp := stubUnixTimestampSequence(1779487408, 1779487409, 1779487410)
+	defer restoreTimestamp()
+
+	stdout, stderr, err := executeCommand("config", "migrate")
+	if err != nil {
+		t.Fatalf("expected config migrate to finish with manual-cleanup warning: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stderr, "warning: Could not rename profiles.json to a timestamped deprecated backup after 3 attempts")
+	assertContains(t, stderr, "retained profiles.json for manual cleanup")
 	if _, err := os.Stat(filepath.Join(configDir, legacyProfileConfigFileName)); err != nil {
 		t.Fatalf("expected legacy profiles.json to remain for manual cleanup: %v", err)
 	}

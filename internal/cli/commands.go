@@ -218,8 +218,13 @@ func runConfigMigrationWithExistingConfig(cmd *cobra.Command, store profileStore
 	}
 
 	warnings := []warning{}
+	backupPath := store.backupPath
 	if _, err := os.Stat(store.legacyPath); err == nil {
-		if backupWarning := store.renameLegacyBackup(); backupWarning.Code != "" {
+		renamedPath, backupWarning := store.renameLegacyBackup()
+		if renamedPath != "" {
+			backupPath = renamedPath
+		}
+		if backupWarning.Code != "" {
 			warnings = append(warnings, backupWarning)
 		}
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -236,7 +241,7 @@ func runConfigMigrationWithExistingConfig(cmd *cobra.Command, store profileStore
 		Message:      resultMessage,
 		OriginalPath: store.legacyPath,
 		MigratedPath: store.path,
-		BackupPath:   store.backupPath,
+		BackupPath:   backupPath,
 	}, warnings)
 }
 
@@ -288,10 +293,15 @@ func runConfigMigrationFromPath(cmd *cobra.Command, store profileStore, sourcePa
 		return err
 	}
 	message := "Migrated legacy profiles.json to config.yaml"
+	backupPath := store.backupPath
 	warnings := []warning{configMigrationAdvisoryWarning()}
 	switch sourcePath {
 	case store.legacyPath:
-		if backupWarning := store.renameLegacyBackup(); backupWarning.Code != "" {
+		renamedPath, backupWarning := store.renameLegacyBackup()
+		if renamedPath != "" {
+			backupPath = renamedPath
+		}
+		if backupWarning.Code != "" {
 			warnings = append(warnings, backupWarning)
 		}
 	case store.backupPath:
@@ -303,7 +313,7 @@ func runConfigMigrationFromPath(cmd *cobra.Command, store profileStore, sourcePa
 		Message:      message,
 		OriginalPath: sourcePath,
 		MigratedPath: store.path,
-		BackupPath:   store.backupPath,
+		BackupPath:   backupPath,
 	}, warnings)
 }
 
@@ -312,7 +322,7 @@ func renderConfigMigrationResult(cmd *cobra.Command, store profileStore, data co
 		Data:     data,
 		Warnings: warnings,
 		Human: func(writer io.Writer) error {
-			_, err := fmt.Fprintf(writer, "config migration %s\nactive config: %s\nlegacy backup: %s\n", data.humanResult(), store.path, store.backupPath)
+			_, err := fmt.Fprintf(writer, "config migration %s\nactive config: %s\nlegacy backup: %s\n", data.humanResult(), store.path, data.BackupPath)
 			return err
 		},
 	})
@@ -1954,7 +1964,8 @@ func runProfileSetup(cmd *cobra.Command, options *profileSetupOptions) error {
 	warnings := []warning{}
 	if loaded.path == store.legacyPath {
 		warnings = append(warnings, configMigrationAdvisoryWarning())
-		if backupWarning := store.renameLegacyBackup(); backupWarning.Code != "" {
+		_, backupWarning := store.renameLegacyBackup()
+		if backupWarning.Code != "" {
 			warnings = append(warnings, backupWarning)
 		}
 	} else if !configExists && recoverableBackupExists {
