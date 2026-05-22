@@ -183,9 +183,7 @@ func runConfigMigrate(cmd *cobra.Command, _ []string) error {
 	return renderConfigMigrationResult(cmd, store, configMigrationData{
 		Result:       "not_needed",
 		Message:      "No migration performed: no legacy profiles.json found; run authnet profile setup to create config.yaml.",
-		OriginalPath: store.legacyPath,
 		MigratedPath: store.path,
-		BackupPath:   store.backupPath,
 	}, nil)
 }
 
@@ -201,12 +199,16 @@ func runConfigMigrationWithExistingConfig(cmd *cobra.Command, store profileStore
 	}
 	if !valid {
 		message := "Migration not needed: config.yaml exists but is invalid, check the file"
+		originalPath, backupPath, err := existingLegacyMigrationPaths(store)
+		if err != nil {
+			return err
+		}
 		result := configMigrationData{
 			Result:       "invalid_existing_config",
 			Message:      message,
-			OriginalPath: store.legacyPath,
+			OriginalPath: originalPath,
 			MigratedPath: store.path,
-			BackupPath:   store.backupPath,
+			BackupPath:   backupPath,
 		}
 		if renderErr := renderConfigMigrationResult(cmd, store, result, []warning{{
 			Code:    "config_migration_not_needed_invalid_yaml",
@@ -218,8 +220,10 @@ func runConfigMigrationWithExistingConfig(cmd *cobra.Command, store profileStore
 	}
 
 	warnings := []warning{}
-	backupPath := store.backupPath
+	originalPath := ""
+	backupPath := ""
 	if _, err := os.Stat(store.legacyPath); err == nil {
+		originalPath = store.legacyPath
 		renamedPath, backupWarning := store.renameLegacyBackup()
 		if renamedPath != "" {
 			backupPath = renamedPath
@@ -232,6 +236,9 @@ func runConfigMigrationWithExistingConfig(cmd *cobra.Command, store profileStore
 	}
 	resultMessage := "Migration not needed: config.yaml already exists"
 	if _, err := os.Stat(store.backupPath); err == nil {
+		if backupPath == "" {
+			backupPath = store.backupPath
+		}
 		resultMessage = "Migration not needed: config.yaml already exists; consider deleting DEPRECATED-profiles.json"
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect deprecated legacy profile config: %w", err)
@@ -239,10 +246,28 @@ func runConfigMigrationWithExistingConfig(cmd *cobra.Command, store profileStore
 	return renderConfigMigrationResult(cmd, store, configMigrationData{
 		Result:       "not_needed",
 		Message:      resultMessage,
-		OriginalPath: store.legacyPath,
+		OriginalPath: originalPath,
 		MigratedPath: store.path,
 		BackupPath:   backupPath,
 	}, warnings)
+}
+
+func existingLegacyMigrationPaths(store profileStore) (string, string, error) {
+	originalPath := ""
+	if _, err := os.Stat(store.legacyPath); err == nil {
+		originalPath = store.legacyPath
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", "", fmt.Errorf("inspect legacy profile config: %w", err)
+	}
+
+	backupPath := ""
+	if _, err := os.Stat(store.backupPath); err == nil {
+		backupPath = store.backupPath
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", "", fmt.Errorf("inspect deprecated legacy profile config: %w", err)
+	}
+
+	return originalPath, backupPath, nil
 }
 
 func runConfigRecoveryMigration(cmd *cobra.Command, store profileStore) error {
@@ -322,7 +347,13 @@ func renderConfigMigrationResult(cmd *cobra.Command, store profileStore, data co
 		Data:     data,
 		Warnings: warnings,
 		Human: func(writer io.Writer) error {
-			_, err := fmt.Fprintf(writer, "config migration %s\nactive config: %s\nlegacy backup: %s\n", data.humanResult(), store.path, data.BackupPath)
+			if _, err := fmt.Fprintf(writer, "config migration %s\nactive config: %s\n", data.humanResult(), store.path); err != nil {
+				return err
+			}
+			if data.BackupPath == "" {
+				return nil
+			}
+			_, err := fmt.Fprintf(writer, "legacy backup: %s\n", data.BackupPath)
 			return err
 		},
 	})
@@ -718,9 +749,9 @@ type profileMutationData struct {
 type configMigrationData struct {
 	Result       string `json:"result"`
 	Message      string `json:"message"`
-	OriginalPath string `json:"original_path"`
+	OriginalPath string `json:"original_path,omitempty"`
 	MigratedPath string `json:"migrated_path"`
-	BackupPath   string `json:"backup_path"`
+	BackupPath   string `json:"backup_path,omitempty"`
 }
 
 func (data configMigrationData) humanResult() string {

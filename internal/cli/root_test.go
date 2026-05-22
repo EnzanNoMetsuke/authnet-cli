@@ -2924,6 +2924,46 @@ func TestConfigMigrateWithExistingConfigRenamesStaleLegacyJSON(t *testing.T) {
 	}
 }
 
+func TestConfigMigrateWithExistingConfigAndNoLegacyOmitsLegacyPaths(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	writeValidProfileConfig(t, configDir)
+
+	stdout, stderr, err := executeCommand("config", "migrate")
+	if err != nil {
+		t.Fatalf("expected config migrate to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, "Migration not needed: config.yaml already exists")
+	assertContains(t, stdout, "active config: "+filepath.Join(configDir, profileConfigFileName))
+	assertNotContains(t, stdout, "legacy backup:")
+	assertNotContains(t, stdout, deprecatedProfileConfigFileName)
+	assertNotContains(t, stderr, "warning:")
+
+	stdout, stderr, err = executeCommand("--automation", "config", "migrate")
+	if err != nil {
+		t.Fatalf("expected automation config migrate to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertNotContains(t, stderr, "warning:")
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("expected valid JSON: %v\noutput:\n%s", err, stdout)
+	}
+	data, ok := got["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected object data field, got %#v", got["data"])
+	}
+	assertJSONField(t, data, "result", "not_needed")
+	assertJSONField(t, data, "message", "Migration not needed: config.yaml already exists")
+	assertJSONField(t, data, "migrated_path", filepath.Join(configDir, profileConfigFileName))
+	if _, ok := data["original_path"]; ok {
+		t.Fatalf("expected original_path to be omitted when no legacy source exists, got %#v", data["original_path"])
+	}
+	if _, ok := data["backup_path"]; ok {
+		t.Fatalf("expected backup_path to be omitted when no legacy backup exists, got %#v", data["backup_path"])
+	}
+}
+
 func TestConfigMigratePreservesExistingDeprecatedBackup(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv(configEnvName, configDir)
