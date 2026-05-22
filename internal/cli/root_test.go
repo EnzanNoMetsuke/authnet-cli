@@ -2782,7 +2782,7 @@ func TestConfigMigrateMigratesLegacyProfilesJSON(t *testing.T) {
 	assertContains(t, stdout, "config migration completed")
 	assertContains(t, stdout, "active config: "+filepath.Join(configDir, profileConfigFileName))
 	assertContains(t, stdout, "legacy backup: "+filepath.Join(configDir, deprecatedProfileConfigFileName))
-	assertContains(t, stderr, "warning: Migrated legacy profiles.json to config.yaml; config.yaml is active going forward and DEPRECATED-profiles.json is a retained legacy backup that can be deleted when no longer needed.")
+	assertContains(t, stderr, "warning: Migrated legacy profiles.json to config.yaml; config.yaml is active going forward and DEPRECATED-profiles.json is a retained legacy backup that can be deleted.")
 
 	configBytes, err := os.ReadFile(filepath.Join(configDir, profileConfigFileName)) // #nosec G304 - test reads the command output from a t.TempDir config root.
 	if err != nil {

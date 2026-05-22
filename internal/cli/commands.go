@@ -321,7 +321,7 @@ func renderConfigMigrationResult(cmd *cobra.Command, store profileStore, data co
 func configMigrationAdvisoryWarning() warning {
 	return warning{
 		Code:    "config_migrated",
-		Message: "Migrated legacy profiles.json to config.yaml; config.yaml is active going forward and DEPRECATED-profiles.json is a retained legacy backup that can be deleted when no longer needed.",
+		Message: "Migrated legacy profiles.json to config.yaml; config.yaml is active going forward and DEPRECATED-profiles.json is a retained legacy backup that can be deleted.",
 	}
 }
 
