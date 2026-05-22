@@ -20,7 +20,17 @@ See the [safety model](docs/safety-model.md) for more details.
 
 ## Installation
 
-The current published release is [`v0.1.0`](https://github.com/EnzanNoMetsuke/authnet-cli/releases/tag/v0.1.0). GitHub Releases are the canonical source for release binaries, checksums, and release notes. Download the archive for your platform from the release page and verify the checksum before running the binary.
+The latest published CLI release is available on [GitHub Releases](https://github.com/EnzanNoMetsuke/authnet-cli/releases/latest), which are the canonical source for release binaries, checksums, and release notes. Download the archive for your platform from the release page and verify the checksum before running the binary.
+
+amd64 & arm64 binaries are available for:
+
+- macOS
+- Linux
+- Windows
+
+> NOTE: Linux & Windows binaries are currently untested; feedback is welcome. Feel free to file an issue and report your experience if something isn't working for you.
+
+### Homebrew
 
 The unsigned Homebrew cask is available from the Exigentix tap:
 
