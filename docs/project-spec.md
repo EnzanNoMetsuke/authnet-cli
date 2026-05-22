@@ -225,7 +225,7 @@ authnet completion ...
 - Runs locally.
 - Migrates legacy `profiles.json` to `config.yaml`.
 - Retains the old JSON as `DEPRECATED-profiles.json`.
-- Reports migration metadata in the JSON envelope and structured warnings. `data.result` is a stable status token, `data.message` is the human-readable detail, `data.active_config` identifies the current active config file when present, and `data.migrated_path` is populated only when the command wrote `config.yaml`.
+- Reports migration metadata in the JSON envelope and structured warnings. `data.result` is a stable status token, `data.message` is the human-readable detail, `data.active_config` identifies the current active config file when present, and `data.migrated_path` is populated only when the command wrote `config.yaml`. The `active_config`, `original_path`, `migrated_path`, and `backup_path` fields are always present in automation output and use an empty string when not applicable.
 
 `authnet auth test`:
 

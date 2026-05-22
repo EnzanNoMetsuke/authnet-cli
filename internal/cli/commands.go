@@ -753,10 +753,10 @@ type profileMutationData struct {
 type configMigrationData struct {
 	Result       string `json:"result"`
 	Message      string `json:"message"`
-	OriginalPath string `json:"original_path,omitempty"`
 	ActiveConfig string `json:"active_config"`
+	OriginalPath string `json:"original_path"`
 	MigratedPath string `json:"migrated_path"`
-	BackupPath   string `json:"backup_path,omitempty"`
+	BackupPath   string `json:"backup_path"`
 }
 
 func (data configMigrationData) humanResult() string {
