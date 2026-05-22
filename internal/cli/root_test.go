@@ -2853,6 +2853,7 @@ func TestConfigMigrateJSONIncludesMetadataAndWarnings(t *testing.T) {
 	assertJSONField(t, data, "result", "completed")
 	assertJSONField(t, data, "message", "Migrated legacy profiles.json to config.yaml")
 	assertJSONField(t, data, "original_path", filepath.Join(configDir, legacyProfileConfigFileName))
+	assertJSONField(t, data, "active_config", filepath.Join(configDir, profileConfigFileName))
 	assertJSONField(t, data, "migrated_path", filepath.Join(configDir, profileConfigFileName))
 	assertJSONField(t, data, "backup_path", filepath.Join(configDir, deprecatedProfileConfigFileName))
 }
@@ -2891,6 +2892,8 @@ func TestConfigMigrateJSONUsesStableResultAndMessage(t *testing.T) {
 	}
 	assertJSONField(t, data, "result", "not_needed")
 	assertJSONField(t, data, "message", "No migration performed: no legacy profiles.json found; run authnet profile setup to create config.yaml.")
+	assertJSONField(t, data, "active_config", "")
+	assertJSONField(t, data, "migrated_path", "")
 }
 
 func TestConfigMigrateWithExistingConfigRenamesStaleLegacyJSON(t *testing.T) {
@@ -2955,7 +2958,8 @@ func TestConfigMigrateWithExistingConfigAndNoLegacyOmitsLegacyPaths(t *testing.T
 	}
 	assertJSONField(t, data, "result", "not_needed")
 	assertJSONField(t, data, "message", "Migration not needed: config.yaml already exists")
-	assertJSONField(t, data, "migrated_path", filepath.Join(configDir, profileConfigFileName))
+	assertJSONField(t, data, "active_config", filepath.Join(configDir, profileConfigFileName))
+	assertJSONField(t, data, "migrated_path", "")
 	if _, ok := data["original_path"]; ok {
 		t.Fatalf("expected original_path to be omitted when no legacy source exists, got %#v", data["original_path"])
 	}
