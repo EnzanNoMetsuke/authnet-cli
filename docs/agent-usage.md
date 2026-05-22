@@ -62,7 +62,7 @@ authnet config migrate
 authnet paths
 ```
 
-If a legacy `profiles.json` file is still active, run `authnet --automation config migrate` for a structured migration report. If only `DEPRECATED-profiles.json` remains and `config.yaml` is absent, rerun with `authnet --automation --yes config migrate` to approve recovery from the retained backup.
+If a legacy `profiles.json` file is still active, run `authnet --automation config migrate` for a structured migration report. Treat `data.result` as the stable status token and `data.message` as display text. If only `DEPRECATED-profiles.json` remains and `config.yaml` is absent, rerun with `authnet --automation --yes config migrate` to approve recovery from the retained backup.
 
 ## Production Reads
 

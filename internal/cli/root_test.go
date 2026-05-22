@@ -2844,9 +2844,46 @@ func TestConfigMigrateJSONIncludesMetadataAndWarnings(t *testing.T) {
 		t.Fatalf("expected object data field, got %#v", got["data"])
 	}
 	assertJSONField(t, data, "result", "completed")
+	assertJSONField(t, data, "message", "Migrated legacy profiles.json to config.yaml")
 	assertJSONField(t, data, "original_path", filepath.Join(configDir, legacyProfileConfigFileName))
 	assertJSONField(t, data, "migrated_path", filepath.Join(configDir, profileConfigFileName))
 	assertJSONField(t, data, "backup_path", filepath.Join(configDir, deprecatedProfileConfigFileName))
+}
+
+func TestConfigMigrateWithoutConfigReportsNoLegacySource(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+
+	stdout, stderr, err := executeCommand("config", "migrate")
+	if err != nil {
+		t.Fatalf("expected config migrate to succeed without config files: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, "No migration performed: no legacy profiles.json found")
+	assertContains(t, stdout, "run authnet profile setup to create config.yaml")
+	assertNotContains(t, stdout, "config.yaml already exists")
+	assertNotContains(t, stderr, "warning:")
+}
+
+func TestConfigMigrateJSONUsesStableResultAndMessage(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+
+	stdout, stderr, err := executeCommand("--json", "config", "migrate")
+	if err != nil {
+		t.Fatalf("expected JSON config migrate to succeed without config files: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertNotContains(t, stderr, "warning:")
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("expected valid JSON: %v\noutput:\n%s", err, stdout)
+	}
+	data, ok := got["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected object data field, got %#v", got["data"])
+	}
+	assertJSONField(t, data, "result", "not_needed")
+	assertJSONField(t, data, "message", "No migration performed: no legacy profiles.json found; run authnet profile setup to create config.yaml.")
 }
 
 func TestConfigMigrateWithExistingConfigRenamesStaleLegacyJSON(t *testing.T) {
@@ -2905,7 +2942,10 @@ func TestConfigMigrateRecoveryRequiresAutomationYes(t *testing.T) {
 		t.Fatalf("expected approved automation recovery migration to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
 	}
 	assertContains(t, stdout, `"result": "recovered"`)
+	assertContains(t, stdout, `"message": "Recovered config.yaml from DEPRECATED-profiles.json"`)
 	assertContains(t, stdout, `"backup_path": "`+filepath.Join(configDir, deprecatedProfileConfigFileName)+`"`)
+	assertContains(t, stdout, `"code": "config_recovered"`)
+	assertNotContains(t, stdout, "Migrated legacy profiles.json to config.yaml")
 	if _, err := os.Stat(filepath.Join(configDir, profileConfigFileName)); err != nil {
 		t.Fatalf("expected approved recovery to create config.yaml: %v", err)
 	}
@@ -2926,11 +2966,35 @@ func TestConfigMigrateWithDeprecatedBackupAndInvalidConfigFailsForConfig(t *test
 	if code != exitUsageOrConfig {
 		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
-	assertContains(t, stdout, `"result": "Migration not needed: config.yaml exists but is invalid, check the file"`)
+	assertContains(t, stdout, `"result": "invalid_existing_config"`)
+	assertContains(t, stdout, `"message": "Migration not needed: config.yaml exists but is invalid, check the file"`)
 	assertContains(t, stdout, `"code": "config_migration_not_needed_invalid_yaml"`)
 	assertNotContains(t, stderr, "warning:")
 	if _, err := os.Stat(filepath.Join(configDir, deprecatedProfileConfigFileName)); err != nil {
 		t.Fatalf("expected deprecated backup presence not to cause failure or deletion: %v", err)
+	}
+}
+
+func TestProfileSetupWarnsWhenDeprecatedBackupCanBeRecovered(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "sandbox-secret-login")
+	t.Setenv(transactionKeyEnvName, "sandbox-secret-key")
+	writeDeprecatedProfileConfig(t, configDir)
+
+	stdout, stderr, err := executeCommand("--automation", "profile", "setup", "--name", "prod-main", "--environment", "production", "--api-login-id-env", "PROD_LOGIN", "--transaction-key-env", "PROD_KEY")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed with recoverable backup warning: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "config_migration_recovery_available"`)
+	assertContains(t, stdout, "DEPRECATED-profiles.json exists but config.yaml was missing")
+	assertContains(t, stdout, "delete config.yaml and run authnet --automation --yes config migrate")
+	assertNotContains(t, stderr, "warning:")
+	if _, err := os.Stat(filepath.Join(configDir, profileConfigFileName)); err != nil {
+		t.Fatalf("expected profile setup to create config.yaml: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(configDir, deprecatedProfileConfigFileName)); err != nil {
+		t.Fatalf("expected deprecated backup to remain available: %v", err)
 	}
 }
 
