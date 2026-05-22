@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/authnet-cli-readme-banner.webp" alt="authnet-cli operator-first Authorize.Net CLI banner" width="900">
+</p>
+
 # authnet-cli
 
 `authnet-cli` is an Authorize.Net operations CLI. The executable is `authnet`.
@@ -6,24 +10,27 @@ The project is in a pre-release `0.1.0` read-first alpha. The current goal is a 
 
 This is not an SDK wrapper, raw API tunnel, MCP server, or compliance product.
 
-## Current Boundary
+## Security
 
-The read-first alpha allows explicit production reads and excludes production writes. Sandbox helper commands may contact the real Authorize.Net sandbox gateway for known test-card scenarios, but production mutation commands are not in v1.
+Current 0.x.x versions allow explicit production reads and exclude production writes. Sandbox helper commands contact the real Authorize.Net sandbox gateway for known test-card scenarios. Production mutation commands are not yet available, though they are on the roadmap for a future release.
 
-Output is redacted by default. The CLI must not write sensitive payment data or customer PII through CLI-controlled persistence.
+**Sensitive output is redacted by default.** The CLI does not write sensitive payment data or customer PII through CLI-controlled persistence, e.g. logs or other durable targets.
 
-See the full [project specification](docs/project-spec.md) and [safety model](docs/safety-model.md) before adding new command surfaces.
+See the [safety model](docs/safety-model.md) for more details.
 
-## Installation State
+## Installation
 
-There is not yet a published package or release artifact. Build from the repository while the alpha is under active development:
+The current published release is [`v0.1.0`](https://github.com/EnzanNoMetsuke/authnet-cli/releases/tag/v0.1.0). GitHub Releases are the canonical source for release binaries, checksums, and release notes. Download the archive for your platform from the release page and verify the checksum before running the binary.
+
+The unsigned Homebrew cask is available from the Exigentix tap:
 
 ```sh
-make build
-./bin/authnet version
+brew tap Exigentix/tap
+brew install --cask authnet
+authnet --version
 ```
 
-GitHub Releases are the canonical release source for v1, with checksums and an initial Homebrew tap path. Until the first tag is published, local builds are the supported install path. See the [release process](docs/release.md) for artifact, checksum, changelog, and Homebrew tap details.
+See the [release process](docs/release.md) for artifact, checksum, changelog, and Homebrew tap details.
 
 `authnet` is currently unsigned and not notarized on macOS. macOS may block first launch of a downloaded release binary. Verify the release checksum before removing quarantine metadata. If you choose to trust the installed `authnet` binary after verification, remove the quarantine attribute with:
 
@@ -31,9 +38,9 @@ GitHub Releases are the canonical release source for v1, with checksums and an i
 xattr -dr com.apple.quarantine "$(realpath "$(command -v authnet)")"
 ```
 
-## V1 Command Scope
+## Commands
 
-Canonical v1 command surfaces:
+The current canonical command surfaces are:
 
 ```text
 authnet --version
@@ -60,19 +67,51 @@ authnet completion ...
 
 Production reads must use an explicit production profile. A default profile may exist only for sandbox-classified profiles.
 
-## User Preferences
+## Profiles
 
-Non-secret user preferences live in `config.yaml` under the resolved `authnet-cli` config directory shown by `authnet paths`. Supported preferences include default color behavior and transaction list sorting:
+**Profiles are named Authorize.Net access targets.** Each profile records a visible profile name, an environment classification (`sandbox` or `production`), and non-secret credential-source references. Commands use profiles to keep sandbox and production access explicit; production profiles must always be selected with `--profile`, while **only sandbox profiles may be made the default**.
 
-```yaml
-preferences:
-  color: auto
-  transaction_list:
-    sort_by: timestamp
-    sort_order: descending
+> ⚠️ Do not put secrets, customer PII, client names, or sensitive merchant labels in profile names. Profile names are visible in normal output and JSON envelopes.
+
+Configure profiles with `authnet profile setup`:
+
+```sh
+authnet profile setup \
+  --name sandbox-main \
+  --environment sandbox \
+  --api-login-id-env AUTHNET_API_LOGIN_ID \
+  --transaction-key-env AUTHNET_TRANSACTION_KEY \
+  --default
 ```
 
-Supported color values are `auto`, `always`, and `never`. Transaction lists support `sort_by` values `timestamp`, `transaction_id`, and `amount`, plus `sort_order` values `ascending` and `descending`. Explicit flags such as `--color=always`, `--no-color`, `--sort-by`, and `--sort-order` override persisted preferences for one invocation. `AUTHNET_TX_SORT_BY` and `AUTHNET_TX_SORT_ORDER` override transaction list preferences when flags are not provided. `--automation` always forces JSON output with no color.
+For production, omit `--default` and select the profile explicitly when running commands:
+
+```sh
+authnet --profile prod-main transaction get TRANSACTION_ID
+```
+
+Profile metadata is stored in `config.yaml` under the config directory shown by `authnet paths`. You can also edit that file directly:
+
+```yaml
+default_profile: sandbox-main
+profiles:
+  - name: sandbox-main
+    environment: sandbox
+    credential_source:
+      type: env
+      api_login_id_env: AUTHNET_API_LOGIN_ID
+      transaction_key_env: AUTHNET_TRANSACTION_KEY
+  - name: prod-main
+    environment: production
+    credential_source:
+      type: env
+      api_login_id_env: AUTHNET_PROD_API_LOGIN_ID
+      transaction_key_env: AUTHNET_PROD_TRANSACTION_KEY
+```
+
+`config.yaml` stores non-secret metadata only. Current gateway commands read environment credential sources. Secure local credential references (e.g. from macOS Keychain) may be recorded as profile metadata, but gateway commands cannot read those references yet — this is planned for a future release.
+
+### Profile Nuances
 
 Raw gateway response output is sandbox-only and explicit. Supported commands are:
 
@@ -92,7 +131,28 @@ authnet sandbox charge cvv --variant no-match --amount 12.34
 authnet sandbox charge duplicate --amount 12.34 --window 120
 ```
 
+## User Preferences
+
+Non-secret user preferences live in `config.yaml` under the resolved config directory shown by `authnet paths`. Supported preferences include default color behavior and transaction list sorting:
+
+```yaml
+preferences:
+  color: auto
+  transaction_list:
+    sort_by: timestamp
+    sort_order: descending
+```
+
+Supported color values are `auto`, `always`, and `never`. Transaction lists support `sort_by` values `timestamp`, `transaction_id`, and `amount`, plus `sort_order` values `ascending` and `descending`. Explicit flags such as `--color=always`, `--no-color`, `--sort-by`, and `--sort-order` override persisted preferences for one invocation. `AUTHNET_TX_SORT_BY` and `AUTHNET_TX_SORT_ORDER` override transaction list preferences when flags are not provided. `--automation` always forces JSON output with no color.
+
 ## Local Development
+
+Build from the repository while the alpha is under active development:
+
+```sh
+make build
+./bin/authnet version
+```
 
 Install the pinned linter and Git hooks:
 
