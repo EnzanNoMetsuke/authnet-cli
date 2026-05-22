@@ -2773,26 +2773,7 @@ func TestConfigMigrateMigratesLegacyProfilesJSON(t *testing.T) {
 	t.Setenv(configEnvName, configDir)
 	t.Setenv(apiLoginIDEnvName, "sandbox-secret-login")
 	t.Setenv(transactionKeyEnvName, "sandbox-secret-key")
-
-	legacyConfig := `{
-  "version": 1,
-  "default_profile": "sandbox-main",
-  "profiles": [
-    {
-      "name": "sandbox-main",
-      "environment": "sandbox",
-      "credential_source": {
-        "type": "env",
-        "api_login_id_env": "AUTHNET_API_LOGIN_ID",
-        "transaction_key_env": "AUTHNET_TRANSACTION_KEY"
-      }
-    }
-  ]
-}
-`
-	if err := os.WriteFile(filepath.Join(configDir, legacyProfileConfigFileName), []byte(legacyConfig), 0o600); err != nil {
-		t.Fatalf("expected to write legacy profile config fixture: %v", err)
-	}
+	writeLegacyProfileConfig(t, configDir)
 
 	stdout, stderr, err := executeCommand("config", "migrate")
 	if err != nil {

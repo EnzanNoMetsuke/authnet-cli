@@ -224,7 +224,7 @@ func (store profileStore) renameLegacyBackup() warning {
 	if err := os.Rename(store.legacyPath, store.backupPath); err != nil {
 		return warning{
 			Code:    "config_migration_backup_rename_failed",
-			Message: fmt.Sprintf("Migrated legacy profiles.json to config.yaml, but could not rename profiles.json to DEPRECATED-profiles.json: %v", err),
+			Message: fmt.Sprintf("Could not rename profiles.json to DEPRECATED-profiles.json: %v", err),
 		}
 	}
 	return warning{}
