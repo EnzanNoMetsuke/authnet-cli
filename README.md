@@ -65,6 +65,7 @@ authnet --version
 authnet version
 authnet paths
 authnet config validate
+authnet config migrate
 authnet auth test
 authnet profile list
 authnet profile setup
@@ -128,6 +129,8 @@ profiles:
 ```
 
 `config.yaml` stores non-secret metadata only. Current gateway commands read environment credential sources. Secure local credential references (e.g. from macOS Keychain) may be recorded as profile metadata, but gateway commands cannot read those references yet — this is planned for a future release.
+
+Older pre-release installs may still have `profiles.json`. Run `authnet config migrate` to create `config.yaml` and retain the old JSON as `DEPRECATED-profiles.json`, which can be deleted after review.
 
 ### Profile Nuances
 

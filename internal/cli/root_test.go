@@ -110,6 +110,55 @@ func writeTransactionSortPreferenceConfig(t *testing.T, configDir string, sortBy
 	}
 }
 
+func writeLegacyProfileConfig(t *testing.T, configDir string) {
+	t.Helper()
+	legacyConfig := `{
+  "version": 1,
+  "default_profile": "sandbox-main",
+  "profiles": [
+    {
+      "name": "sandbox-main",
+      "environment": "sandbox",
+      "credential_source": {
+        "type": "env",
+        "api_login_id_env": "AUTHNET_API_LOGIN_ID",
+        "transaction_key_env": "AUTHNET_TRANSACTION_KEY"
+      }
+    }
+  ]
+}
+`
+	if err := os.WriteFile(filepath.Join(configDir, legacyProfileConfigFileName), []byte(legacyConfig), 0o600); err != nil {
+		t.Fatalf("expected to write legacy profile config fixture: %v", err)
+	}
+}
+
+func writeDeprecatedProfileConfig(t *testing.T, configDir string) {
+	t.Helper()
+	writeLegacyProfileConfig(t, configDir)
+	if err := os.Rename(filepath.Join(configDir, legacyProfileConfigFileName), filepath.Join(configDir, deprecatedProfileConfigFileName)); err != nil {
+		t.Fatalf("expected to rename legacy profile config fixture: %v", err)
+	}
+}
+
+func writeValidProfileConfig(t *testing.T, configDir string) {
+	t.Helper()
+	configText := `version: 1
+default_profile: sandbox-main
+profiles:
+  - name: sandbox-main
+    environment: sandbox
+    credential_source:
+      type: env
+      api_login_id_env: AUTHNET_API_LOGIN_ID
+      transaction_key_env: AUTHNET_TRANSACTION_KEY
+preferences: {}
+`
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte(configText), 0o600); err != nil {
+		t.Fatalf("expected to write YAML profile config fixture: %v", err)
+	}
+}
+
 func TestRootStartsAndShowsHelp(t *testing.T) {
 	stdout, _, err := executeCommand("--help")
 	if err != nil {
@@ -2710,6 +2759,179 @@ func TestLegacyProfilesJSONIsReadAndMigratedOnNextWrite(t *testing.T) {
 	assertNotContains(t, configText, "sandbox-secret-key")
 	assertNotContains(t, configText, "prod-secret-login")
 	assertNotContains(t, configText, "prod-secret-key")
+	assertContains(t, stdout, `"code": "config_migrated"`)
+	if _, err := os.Stat(filepath.Join(configDir, legacyProfileConfigFileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected legacy profiles.json to be renamed, stat error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(configDir, deprecatedProfileConfigFileName)); err != nil {
+		t.Fatalf("expected retained legacy backup to exist: %v", err)
+	}
+}
+
+func TestConfigMigrateMigratesLegacyProfilesJSON(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "sandbox-secret-login")
+	t.Setenv(transactionKeyEnvName, "sandbox-secret-key")
+
+	legacyConfig := `{
+  "version": 1,
+  "default_profile": "sandbox-main",
+  "profiles": [
+    {
+      "name": "sandbox-main",
+      "environment": "sandbox",
+      "credential_source": {
+        "type": "env",
+        "api_login_id_env": "AUTHNET_API_LOGIN_ID",
+        "transaction_key_env": "AUTHNET_TRANSACTION_KEY"
+      }
+    }
+  ]
+}
+`
+	if err := os.WriteFile(filepath.Join(configDir, legacyProfileConfigFileName), []byte(legacyConfig), 0o600); err != nil {
+		t.Fatalf("expected to write legacy profile config fixture: %v", err)
+	}
+
+	stdout, stderr, err := executeCommand("config", "migrate")
+	if err != nil {
+		t.Fatalf("expected config migrate to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, "config migration completed")
+	assertContains(t, stdout, "active config: "+filepath.Join(configDir, profileConfigFileName))
+	assertContains(t, stdout, "legacy backup: "+filepath.Join(configDir, deprecatedProfileConfigFileName))
+	assertContains(t, stderr, "warning: Migrated legacy profiles.json to config.yaml; config.yaml is active going forward and DEPRECATED-profiles.json is a retained legacy backup that can be deleted when no longer needed.")
+
+	configBytes, err := os.ReadFile(filepath.Join(configDir, profileConfigFileName)) // #nosec G304 - test reads the command output from a t.TempDir config root.
+	if err != nil {
+		t.Fatalf("expected migrated YAML profile config to exist: %v", err)
+	}
+	configText := string(configBytes)
+	assertContains(t, configText, "default_profile: sandbox-main")
+	assertContains(t, configText, "name: sandbox-main")
+	assertNotContains(t, configText, "sandbox-secret-login")
+	assertNotContains(t, configText, "sandbox-secret-key")
+	if _, err := os.Stat(filepath.Join(configDir, legacyProfileConfigFileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected legacy profiles.json to be renamed, stat error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(configDir, deprecatedProfileConfigFileName)); err != nil {
+		t.Fatalf("expected retained legacy backup to exist: %v", err)
+	}
+}
+
+func TestConfigMigrateJSONIncludesMetadataAndWarnings(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "sandbox-secret-login")
+	t.Setenv(transactionKeyEnvName, "sandbox-secret-key")
+	writeLegacyProfileConfig(t, configDir)
+
+	stdout, stderr, err := executeCommand("--json", "config", "migrate")
+	if err != nil {
+		t.Fatalf("expected JSON config migrate to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertNotContains(t, stderr, "warning:")
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("expected valid JSON: %v\noutput:\n%s", err, stdout)
+	}
+	assertJSONField(t, got, "command", "authnet config migrate")
+	assertContains(t, stdout, `"code": "config_migrated"`)
+	data, ok := got["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected object data field, got %#v", got["data"])
+	}
+	assertJSONField(t, data, "result", "completed")
+	assertJSONField(t, data, "original_path", filepath.Join(configDir, legacyProfileConfigFileName))
+	assertJSONField(t, data, "migrated_path", filepath.Join(configDir, profileConfigFileName))
+	assertJSONField(t, data, "backup_path", filepath.Join(configDir, deprecatedProfileConfigFileName))
+}
+
+func TestConfigMigrateWithExistingConfigRenamesStaleLegacyJSON(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	writeValidProfileConfig(t, configDir)
+	writeLegacyProfileConfig(t, configDir)
+	before, err := os.ReadFile(filepath.Join(configDir, profileConfigFileName)) // #nosec G304 - test reads the command output from a t.TempDir config root.
+	if err != nil {
+		t.Fatalf("expected to read YAML config fixture: %v", err)
+	}
+
+	stdout, stderr, err := executeCommand("config", "migrate")
+	if err != nil {
+		t.Fatalf("expected config migrate to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, "Migration not needed: config.yaml already exists; consider deleting DEPRECATED-profiles.json")
+	assertNotContains(t, stderr, "warning:")
+	after, err := os.ReadFile(filepath.Join(configDir, profileConfigFileName)) // #nosec G304 - test reads the command output from a t.TempDir config root.
+	if err != nil {
+		t.Fatalf("expected to read YAML config fixture: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("expected config.yaml not to be rewritten\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	if _, err := os.Stat(filepath.Join(configDir, legacyProfileConfigFileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected stale profiles.json to be renamed, stat error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(configDir, deprecatedProfileConfigFileName)); err != nil {
+		t.Fatalf("expected retained legacy backup to exist: %v", err)
+	}
+}
+
+func TestConfigMigrateRecoveryRequiresAutomationYes(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "sandbox-secret-login")
+	t.Setenv(transactionKeyEnvName, "sandbox-secret-key")
+	writeDeprecatedProfileConfig(t, configDir)
+
+	stdout, stderr, code, err := executeCommandWithExit("--automation", "config", "migrate")
+	if err == nil {
+		t.Fatal("expected automation recovery migration without approval to fail")
+	}
+	if code != exitSafetyDenied {
+		t.Fatalf("expected safety denied exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, "authnet --automation --yes config migrate")
+	assertContains(t, stdout, `"code": "config_migration_recovery_requires_approval"`)
+	if _, err := os.Stat(filepath.Join(configDir, profileConfigFileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected unapproved recovery to avoid creating config.yaml, stat error: %v", err)
+	}
+
+	stdout, stderr, err = executeCommand("--automation", "--yes", "config", "migrate")
+	if err != nil {
+		t.Fatalf("expected approved automation recovery migration to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"result": "recovered"`)
+	assertContains(t, stdout, `"backup_path": "`+filepath.Join(configDir, deprecatedProfileConfigFileName)+`"`)
+	if _, err := os.Stat(filepath.Join(configDir, profileConfigFileName)); err != nil {
+		t.Fatalf("expected approved recovery to create config.yaml: %v", err)
+	}
+}
+
+func TestConfigMigrateWithDeprecatedBackupAndInvalidConfigFailsForConfig(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	writeDeprecatedProfileConfig(t, configDir)
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte("profiles: [\n"), 0o600); err != nil {
+		t.Fatalf("expected to write invalid YAML config fixture: %v", err)
+	}
+
+	stdout, stderr, code, err := executeCommandWithExit("--automation", "config", "migrate")
+	if err == nil {
+		t.Fatal("expected migration to fail for invalid config.yaml")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"result": "Migration not needed: config.yaml exists but is invalid, check the file"`)
+	assertContains(t, stdout, `"code": "config_migration_not_needed_invalid_yaml"`)
+	assertNotContains(t, stderr, "warning:")
+	if _, err := os.Stat(filepath.Join(configDir, deprecatedProfileConfigFileName)); err != nil {
+		t.Fatalf("expected deprecated backup presence not to cause failure or deletion: %v", err)
+	}
 }
 
 func TestConfigValidateReportsLegacyProfilesJSONSource(t *testing.T) {
@@ -2744,6 +2966,7 @@ func TestConfigValidateReportsLegacyProfilesJSONSource(t *testing.T) {
 	}
 	assertContains(t, stdout, "profile config: "+filepath.Join(configDir, legacyProfileConfigFileName))
 	assertNotContains(t, stdout, "profile config: "+filepath.Join(configDir, profileConfigFileName))
+	assertContains(t, stderr, "warning: legacy profiles.json is active; run authnet config migrate or update a profile with authnet profile setup to migrate to config.yaml.")
 	if _, err := os.Stat(filepath.Join(configDir, profileConfigFileName)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected config validate to avoid creating config.yaml, stat error: %v", err)
 	}
@@ -2753,6 +2976,7 @@ func TestConfigValidateReportsLegacyProfilesJSONSource(t *testing.T) {
 		t.Fatalf("expected JSON config validate to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
 	}
 	assertContains(t, stdout, `"config_path": "`+filepath.Join(configDir, legacyProfileConfigFileName)+`"`)
+	assertContains(t, stdout, `"code": "legacy_profile_config_active"`)
 	assertNotContains(t, stdout, `"config_path": "`+filepath.Join(configDir, profileConfigFileName)+`"`)
 	if _, err := os.Stat(filepath.Join(configDir, profileConfigFileName)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected JSON config validate to avoid creating config.yaml, stat error: %v", err)

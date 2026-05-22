@@ -15,27 +15,29 @@ import (
 )
 
 const (
-	configEnvName               = "AUTHNET_CONFIG_DIR"
-	profileEnvName              = "AUTHNET_PROFILE"
-	environmentEnvName          = "AUTHNET_ENVIRONMENT"
-	apiLoginIDEnvName           = "AUTHNET_API_LOGIN_ID"
-	transactionKeyEnvName       = "AUTHNET_TRANSACTION_KEY"
-	profileConfigFileName       = "config.yaml"
-	legacyProfileConfigFileName = "profiles.json"
-	profileConfigVersion        = 1
-	environmentSandbox          = "sandbox"
-	environmentProduction       = "production"
-	credentialSourceEnv         = "env"
-	credentialSourceSecureRef   = "secure-local-reference" // #nosec G101 - credential source type label, not a secret.
-	productionMarker            = "PRODUCTION"
-	defaultCredentialLoginEnv   = apiLoginIDEnvName
-	defaultCredentialTranKeyEnv = transactionKeyEnvName
+	configEnvName                   = "AUTHNET_CONFIG_DIR"
+	profileEnvName                  = "AUTHNET_PROFILE"
+	environmentEnvName              = "AUTHNET_ENVIRONMENT"
+	apiLoginIDEnvName               = "AUTHNET_API_LOGIN_ID"
+	transactionKeyEnvName           = "AUTHNET_TRANSACTION_KEY"
+	profileConfigFileName           = "config.yaml"
+	legacyProfileConfigFileName     = "profiles.json"
+	deprecatedProfileConfigFileName = "DEPRECATED-profiles.json"
+	profileConfigVersion            = 1
+	environmentSandbox              = "sandbox"
+	environmentProduction           = "production"
+	credentialSourceEnv             = "env"
+	credentialSourceSecureRef       = "secure-local-reference" // #nosec G101 - credential source type label, not a secret.
+	productionMarker                = "PRODUCTION"
+	defaultCredentialLoginEnv       = apiLoginIDEnvName
+	defaultCredentialTranKeyEnv     = transactionKeyEnvName
 )
 
 type profileStore struct {
 	dir        string
 	path       string
 	legacyPath string
+	backupPath string
 }
 
 type loadedProfileFile struct {
@@ -86,6 +88,7 @@ func newProfileStore() (profileStore, error) {
 		dir:        dir,
 		path:       filepath.Join(dir, profileConfigFileName),
 		legacyPath: filepath.Join(dir, legacyProfileConfigFileName),
+		backupPath: filepath.Join(dir, deprecatedProfileConfigFileName),
 	}, nil
 }
 
@@ -215,6 +218,16 @@ func (store profileStore) save(file profileFile) error {
 		return fmt.Errorf("write profile config: %w", err)
 	}
 	return nil
+}
+
+func (store profileStore) renameLegacyBackup() warning {
+	if err := os.Rename(store.legacyPath, store.backupPath); err != nil {
+		return warning{
+			Code:    "config_migration_backup_rename_failed",
+			Message: fmt.Sprintf("Migrated legacy profiles.json to config.yaml, but could not rename profiles.json to DEPRECATED-profiles.json: %v", err),
+		}
+	}
+	return warning{}
 }
 
 func upsertProfile(file profileFile, profile profileEntry, defaultProfile bool) (profileFile, error) {

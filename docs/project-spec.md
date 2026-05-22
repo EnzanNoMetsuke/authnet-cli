@@ -194,6 +194,7 @@ authnet --version
 authnet version
 authnet paths
 authnet config validate
+authnet config migrate
 authnet auth test
 authnet profile list
 authnet profile setup
@@ -217,6 +218,14 @@ authnet completion ...
 - Checks non-secret profile config shape.
 - Checks credential-source availability.
 - Does not print secret values.
+- Warns when legacy `profiles.json` is the active source and points operators to `authnet config migrate`.
+
+`authnet config migrate`:
+
+- Runs locally.
+- Migrates legacy `profiles.json` to `config.yaml`.
+- Retains the old JSON as `DEPRECATED-profiles.json`.
+- Reports migration metadata in the JSON envelope and structured warnings.
 
 `authnet auth test`:
 
