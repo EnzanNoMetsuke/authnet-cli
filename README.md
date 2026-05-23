@@ -202,4 +202,9 @@ Contributor expectations are documented in [CONTRIBUTING.md](CONTRIBUTING.md). A
 
 ## License
 
-`authnet-cli` is released under the MIT License. See [LICENSE](LICENSE) for the full license text and trademark exception.
+`authnet-cli` is released under the MIT License. 
+
+See [LICENSE](LICENSE) for the full license text and [TRADEMARK](TRADEMARK) for trademark exceptions.
+
+- **Code:** The source code, configuration files, and documentation in this repository are available under the MIT License. You are free to use, modify, and distribute the code as long as you include the original copyright notice.
+- The "authnet-cli" name, the "authnet-cli" brand, and the "authnet-cli" logo are trademarks of Exigentix LLC and are **not** covered by the MIT License.
