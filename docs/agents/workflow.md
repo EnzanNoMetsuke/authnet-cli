@@ -34,6 +34,8 @@ After committing, update related issue statuses and labels to reflect the curren
 
 Add a comment to each related issue with a link to the specific commit containing the related changes. If multiple commits are created for an issue, include one commit link per line.
 
+The Linear MCP tool for creating or updating comments is `save_comment`. It creates or updates a comment on a Linear issue, project, initiative, document, or project milestone. If `id` is provided, it updates the existing comment; otherwise it creates a new one. To start a new thread, pass `body` and exactly one of `issueId`, `projectId`, `initiativeId`, `documentId`, or `milestoneId`. Comments on issues, projects, and initiatives become top-level discussion threads. Comments on documents and milestones become description comments. To reply to an existing thread, pass `parentId` and `body`; the reply inherits the parent's thread type, so no entity reference is needed.
+
 Every Linear comment posted during triage or workflow updates must begin with:
 
 ```markdown

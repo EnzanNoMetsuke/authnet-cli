@@ -49,6 +49,7 @@ authnet --version
 authnet version
 authnet paths
 authnet config validate
+authnet config migrate
 authnet auth test
 authnet profile list
 authnet profile setup

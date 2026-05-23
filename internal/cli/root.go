@@ -26,6 +26,7 @@ const (
 type globalOptions struct {
 	JSON        bool
 	Automation  bool
+	Yes         bool
 	Profile     string
 	Environment string
 	RawResponse bool
@@ -53,6 +54,7 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 	root.SetVersionTemplate("authnet {{.Version}}\n")
 	root.PersistentFlags().BoolVar(&options.JSON, "json", false, "emit the stable JSON contract")
 	root.PersistentFlags().BoolVar(&options.Automation, "automation", false, "enable deterministic non-interactive automation mode")
+	root.PersistentFlags().BoolVar(&options.Yes, "yes", false, "approve non-interactive confirmations where supported")
 	root.PersistentFlags().StringVar(&options.Profile, "profile", "", "profile name to use for this command")
 	root.PersistentFlags().BoolVar(&options.RawResponse, "raw-response", false, "allow sandbox-only raw gateway response output")
 	root.PersistentFlags().StringVar(&options.Color, "color", "auto", "control color output: auto, always, never")
@@ -262,7 +264,12 @@ func commandSupportsRawResponse(cmd *cobra.Command) bool {
 }
 
 func commandUsesPreferences(cmd *cobra.Command) bool {
-	return cmd.CommandPath() != "authnet paths"
+	switch cmd.CommandPath() {
+	case "authnet paths", "authnet config migrate":
+		return false
+	default:
+		return true
+	}
 }
 
 func invalidColorValueError(cmd *cobra.Command, config *cliConfig, color string) error {

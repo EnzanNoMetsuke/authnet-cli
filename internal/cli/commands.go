@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.yaml.in/yaml/v3"
 )
 
 const (
@@ -92,6 +94,11 @@ func newConfigCommand() *cobra.Command {
 		Short: "Manage local non-secret profile config",
 	}
 	config.AddCommand(&cobra.Command{
+		Use:   "migrate",
+		Short: "Migrate legacy profile config to config.yaml",
+		RunE:  runConfigMigrate,
+	})
+	config.AddCommand(&cobra.Command{
 		Use:   "validate",
 		Short: "Validate local non-secret profile config",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -111,6 +118,12 @@ func newConfigCommand() *cobra.Command {
 				warnings = append(warnings, warning{
 					Code:    "no_profiles",
 					Message: "no profiles are configured.",
+				})
+			}
+			if loaded.path == store.legacyPath {
+				warnings = append(warnings, warning{
+					Code:    "legacy_profile_config_active",
+					Message: "legacy profiles.json is active; run authnet config migrate or update a profile with authnet profile setup to migrate to config.yaml.",
 				})
 			}
 			renderErr := renderResult(cmd, commandResult{
@@ -145,6 +158,230 @@ func newConfigCommand() *cobra.Command {
 		},
 	})
 	return config
+}
+
+func runConfigMigrate(cmd *cobra.Command, _ []string) error {
+	store, err := newProfileStore()
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(store.path); err == nil {
+		return runConfigMigrationWithExistingConfig(cmd, store)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect profile config: %w", err)
+	}
+	if _, err := os.Stat(store.legacyPath); err == nil {
+		return runConfigMigrationFromPath(cmd, store, store.legacyPath, "completed")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect legacy profile config: %w", err)
+	}
+	if _, err := os.Stat(store.backupPath); err == nil {
+		return runConfigRecoveryMigration(cmd, store)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect deprecated legacy profile config: %w", err)
+	}
+	return renderConfigMigrationResult(cmd, configMigrationData{
+		Result:  "not_needed",
+		Message: "No migration performed: no legacy profiles.json found; run authnet profile setup to create config.yaml.",
+	}, nil)
+}
+
+func runConfigMigrationWithExistingConfig(cmd *cobra.Command, store profileStore) error {
+	data, err := os.ReadFile(store.path) // #nosec G304 - path is the resolved CLI-controlled config file path.
+	valid := true
+	if err != nil {
+		return fmt.Errorf("read profile config: %w", err)
+	}
+	var file profileFile
+	if err := yaml.Unmarshal(data, &file); err != nil {
+		valid = false
+	}
+	if !valid {
+		message := "Migration not needed: config.yaml exists but is invalid, check the file"
+		originalPath, backupPath, err := existingLegacyMigrationPaths(store)
+		if err != nil {
+			return err
+		}
+		result := configMigrationData{
+			Result:       "invalid_existing_config",
+			Message:      message,
+			OriginalPath: originalPath,
+			ActiveConfig: store.path,
+			BackupPath:   backupPath,
+		}
+		if renderErr := renderConfigMigrationResult(cmd, result, []warning{{
+			Code:    "config_migration_not_needed_invalid_yaml",
+			Message: message,
+		}}); renderErr != nil {
+			return renderErr
+		}
+		return renderedError{exitCode: exitUsageOrConfig, message: "profile config is not valid YAML", forceExit: true}
+	}
+
+	warnings := []warning{}
+	originalPath := ""
+	backupPath := ""
+	if _, err := os.Stat(store.legacyPath); err == nil {
+		originalPath = store.legacyPath
+		renamedPath, backupWarning := store.renameLegacyBackup()
+		if renamedPath != "" {
+			backupPath = renamedPath
+		}
+		if backupWarning.Code != "" {
+			warnings = append(warnings, backupWarning)
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect legacy profile config: %w", err)
+	}
+	resultMessage := "Migration not needed: config.yaml already exists"
+	if _, err := os.Stat(store.backupPath); err == nil {
+		if backupPath == "" {
+			backupPath = store.backupPath
+		}
+		resultMessage = "Migration not needed: config.yaml already exists; consider deleting DEPRECATED-profiles.json"
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect deprecated legacy profile config: %w", err)
+	}
+	return renderConfigMigrationResult(cmd, configMigrationData{
+		Result:       "not_needed",
+		Message:      resultMessage,
+		OriginalPath: originalPath,
+		ActiveConfig: store.path,
+		BackupPath:   backupPath,
+	}, warnings)
+}
+
+func existingLegacyMigrationPaths(store profileStore) (string, string, error) {
+	originalPath := ""
+	if _, err := os.Stat(store.legacyPath); err == nil {
+		originalPath = store.legacyPath
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", "", fmt.Errorf("inspect legacy profile config: %w", err)
+	}
+
+	backupPath := ""
+	if _, err := os.Stat(store.backupPath); err == nil {
+		backupPath = store.backupPath
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", "", fmt.Errorf("inspect deprecated legacy profile config: %w", err)
+	}
+
+	return originalPath, backupPath, nil
+}
+
+func runConfigRecoveryMigration(cmd *cobra.Command, store profileStore) error {
+	global := optionsFromCommand(cmd)
+	if !global.Yes {
+		message := "Recovery migration requires explicit approval; re-run with authnet --automation --yes config migrate to approve using DEPRECATED-profiles.json"
+		if !global.Automation {
+			scanner := bufio.NewScanner(cmd.InOrStdin())
+			if _, err := fmt.Fprint(cmd.ErrOrStderr(), "recreate config.yaml from DEPRECATED-profiles.json? type yes to continue: "); err != nil {
+				return err
+			}
+			if scanner.Scan() && strings.EqualFold(strings.TrimSpace(scanner.Text()), "yes") {
+				return runConfigMigrationFromPath(cmd, store, store.backupPath, "recovered")
+			}
+			if err := scanner.Err(); err != nil {
+				return err
+			}
+			message = "Recovery migration requires explicit approval before using DEPRECATED-profiles.json"
+		}
+		result := configMigrationData{
+			Result:       "approval_required",
+			Message:      message,
+			OriginalPath: store.backupPath,
+			BackupPath:   store.backupPath,
+		}
+		if renderErr := renderConfigMigrationResult(cmd, result, []warning{{
+			Code:    "config_migration_recovery_requires_approval",
+			Message: message,
+		}}); renderErr != nil {
+			return renderErr
+		}
+		return renderedError{exitCode: exitSafetyDenied, message: message, forceExit: true}
+	}
+	return runConfigMigrationFromPath(cmd, store, store.backupPath, "recovered")
+}
+
+func runConfigMigrationFromPath(cmd *cobra.Command, store profileStore, sourcePath string, result string) error {
+	data, err := os.ReadFile(sourcePath) // #nosec G304 - path is the resolved CLI-controlled config file path.
+	if err != nil {
+		return fmt.Errorf("read legacy profile config: %w", err)
+	}
+	var file profileFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		return newUsageError("legacy profile config is not valid JSON: %v", err)
+	}
+	if err := store.save(normalizeProfileFile(file)); err != nil {
+		return err
+	}
+	message := "Migrated legacy profiles.json to config.yaml"
+	backupPath := store.backupPath
+	warnings := []warning{configMigrationAdvisoryWarning()}
+	switch sourcePath {
+	case store.legacyPath:
+		renamedPath, backupWarning := store.renameLegacyBackup()
+		if renamedPath != "" {
+			backupPath = renamedPath
+		}
+		if backupWarning.Code != "" {
+			warnings = append(warnings, backupWarning)
+		}
+	case store.backupPath:
+		message = "Recovered config.yaml from DEPRECATED-profiles.json"
+		warnings = []warning{configRecoveryAdvisoryWarning()}
+	}
+	return renderConfigMigrationResult(cmd, configMigrationData{
+		Result:       result,
+		Message:      message,
+		OriginalPath: sourcePath,
+		ActiveConfig: store.path,
+		MigratedPath: store.path,
+		BackupPath:   backupPath,
+	}, warnings)
+}
+
+func renderConfigMigrationResult(cmd *cobra.Command, data configMigrationData, warnings []warning) error {
+	return renderResult(cmd, commandResult{
+		Data:     data,
+		Warnings: warnings,
+		Human: func(writer io.Writer) error {
+			if _, err := fmt.Fprintf(writer, "config migration %s\n", data.humanResult()); err != nil {
+				return err
+			}
+			if data.ActiveConfig != "" {
+				if _, err := fmt.Fprintf(writer, "active config: %s\n", data.ActiveConfig); err != nil {
+					return err
+				}
+			}
+			if data.BackupPath == "" {
+				return nil
+			}
+			_, err := fmt.Fprintf(writer, "legacy backup: %s\n", data.BackupPath)
+			return err
+		},
+	})
+}
+
+func configMigrationAdvisoryWarning() warning {
+	return warning{
+		Code:    "config_migrated",
+		Message: "Migrated legacy profiles.json to config.yaml; config.yaml is active going forward and DEPRECATED-profiles.json is a retained legacy backup that can be deleted.",
+	}
+}
+
+func configRecoveryAdvisoryWarning() warning {
+	return warning{
+		Code:    "config_recovered",
+		Message: "Recovered config.yaml from DEPRECATED-profiles.json; config.yaml is active going forward and the retained backup can be deleted when no longer needed.",
+	}
+}
+
+func configMigrationRecoveryAvailableWarning() warning {
+	return warning{
+		Code:    "config_migration_recovery_available",
+		Message: "DEPRECATED-profiles.json exists but config.yaml was missing; authnet profile setup created a new config.yaml. To recover profiles from the backup instead, delete config.yaml and run authnet --automation --yes config migrate.",
+	}
 }
 
 func newAuthCommand() *cobra.Command {
@@ -511,6 +748,22 @@ type profileMutationData struct {
 	ConfigPath  string `json:"config_path"`
 	Default     bool   `json:"default,omitempty"`
 	Removed     bool   `json:"removed,omitempty"`
+}
+
+type configMigrationData struct {
+	Result       string `json:"result"`
+	Message      string `json:"message"`
+	ActiveConfig string `json:"active_config"`
+	OriginalPath string `json:"original_path"`
+	MigratedPath string `json:"migrated_path"`
+	BackupPath   string `json:"backup_path"`
+}
+
+func (data configMigrationData) humanResult() string {
+	if data.Message == "" || data.Result == "completed" || data.Result == "recovered" {
+		return data.Result
+	}
+	return data.Message
 }
 
 type authTestData struct {
@@ -1718,16 +1971,41 @@ func runProfileSetup(cmd *cobra.Command, options *profileSetupOptions) error {
 	if err != nil {
 		return err
 	}
-	file, err := store.load()
+	configExists := true
+	if _, err := os.Stat(store.path); errors.Is(err, os.ErrNotExist) {
+		configExists = false
+	} else if err != nil {
+		return fmt.Errorf("inspect profile config: %w", err)
+	}
+	recoverableBackupExists := false
+	if !configExists {
+		if _, err := os.Stat(store.backupPath); err == nil {
+			recoverableBackupExists = true
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect deprecated legacy profile config: %w", err)
+		}
+	}
+	loaded, err := store.loadWithSource()
 	if err != nil {
 		return err
 	}
+	file := loaded.file
 	file, err = upsertProfile(file, entry, options.Default)
 	if err != nil {
 		return err
 	}
 	if err := store.save(file); err != nil {
 		return err
+	}
+	warnings := []warning{}
+	if loaded.path == store.legacyPath {
+		warnings = append(warnings, configMigrationAdvisoryWarning())
+		_, backupWarning := store.renameLegacyBackup()
+		if backupWarning.Code != "" {
+			warnings = append(warnings, backupWarning)
+		}
+	} else if !configExists && recoverableBackupExists {
+		warnings = append(warnings, configMigrationRecoveryAvailableWarning())
 	}
 	return renderResult(cmd, commandResult{
 		Data: profileMutationData{
@@ -1744,6 +2022,7 @@ func runProfileSetup(cmd *cobra.Command, options *profileSetupOptions) error {
 			_, err := fmt.Fprintf(writer, "profile saved: %s (%s)%s\n", entry.Name, entry.Environment, defaultText)
 			return err
 		},
+		Warnings: warnings,
 	})
 }
 

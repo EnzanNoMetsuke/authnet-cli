@@ -58,8 +58,11 @@ authnet profile setup
 authnet profile list
 authnet profile remove
 authnet config validate
+authnet config migrate
 authnet paths
 ```
+
+If a legacy `profiles.json` file is still active, run `authnet --automation config migrate` for a structured migration report. Treat `data.result` as the stable status token, `data.message` as display text, `data.active_config` as the current active config file when present, and `data.migrated_path` as the file written by a completed migration or recovery. The `active_config`, `original_path`, `migrated_path`, and `backup_path` fields are always present in automation output and use an empty string when not applicable. If only `DEPRECATED-profiles.json` remains and `config.yaml` is absent, rerun with `authnet --automation --yes config migrate` to approve recovery from the retained backup.
 
 ## Production Reads
 
