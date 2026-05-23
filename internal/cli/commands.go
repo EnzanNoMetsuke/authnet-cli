@@ -1144,6 +1144,9 @@ func runTransactionList(cmd *cobra.Command, listOptions *transactionListOptions)
 	hasMoreCandidates := false
 	for _, batch := range batches.BatchList {
 		pageLimit := limit
+		if !filterOptions.empty() {
+			pageLimit = transactionListCandidateLimit(limit, sortOptions)
+		}
 		for offset := 1; ; offset++ {
 			response, err := client.getTransactionList(cmd.Context(), profile.Credentials, batch.BatchID.String(), gatewayPaging{
 				Limit:  pageLimit,
@@ -1162,7 +1165,7 @@ func runTransactionList(cmd *cobra.Command, listOptions *transactionListOptions)
 				hasMoreCandidates = true
 			}
 			data.Transactions = append(data.Transactions, filterTransactionListItems(transactionListItems(response.Transactions, batch.BatchID.String()), filterOptions)...)
-			if filterOptions.empty() || len(response.Transactions) < pageLimit || len(data.Transactions) >= limit {
+			if filterOptions.empty() || len(response.Transactions) < pageLimit || transactionListCanStopAfterFilteredLimit(data.Transactions, limit, sortOptions) {
 				break
 			}
 		}
@@ -1212,9 +1215,6 @@ func runTransactionUnsettledList(cmd *cobra.Command, listOptions *transactionUns
 		timestampsInUTC: listOptions.UTC,
 	}
 	candidateLimit := transactionListCandidateLimit(limit, sortOptions)
-	if !filterOptions.empty() {
-		candidateLimit = limit
-	}
 	hasMoreCandidates := false
 	for offset := 1; ; offset++ {
 		response, err := client.getUnsettledTransactionList(cmd.Context(), profile.Credentials, gatewayPaging{
@@ -1234,7 +1234,7 @@ func runTransactionUnsettledList(cmd *cobra.Command, listOptions *transactionUns
 			hasMoreCandidates = true
 		}
 		data.Transactions = append(data.Transactions, filterTransactionListItems(transactionListItems(response.Transactions, ""), filterOptions)...)
-		if filterOptions.empty() || len(response.Transactions) < candidateLimit || len(data.Transactions) >= limit {
+		if filterOptions.empty() || len(response.Transactions) < candidateLimit || transactionListCanStopAfterFilteredLimit(data.Transactions, limit, sortOptions) {
 			break
 		}
 	}
@@ -1651,6 +1651,10 @@ func transactionListCandidateLimit(limit int, sortOptions transactionSortOptions
 	return maxTransactionListLimit
 }
 
+func transactionListCanStopAfterFilteredLimit(items []transactionListItem, limit int, sortOptions transactionSortOptions) bool {
+	return len(items) >= limit && sortOptions.By == defaultTransactionSortBy && sortOptions.Order == defaultTransactionSortOrder
+}
+
 type transactionSortOptions struct {
 	By    string
 	Order string
@@ -1835,6 +1839,10 @@ func normalizeTransactionFilterAmount(value string) (string, error) {
 	}
 	if !allDigits(whole) {
 		return "", fmt.Errorf("invalid amount")
+	}
+	whole = strings.TrimLeft(whole, "0")
+	if whole == "" {
+		whole = "0"
 	}
 	if !hasFraction {
 		if amount, err := strconv.ParseFloat(whole, 64); err != nil || amount <= 0 {

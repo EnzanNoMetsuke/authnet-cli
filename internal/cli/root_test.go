@@ -1751,7 +1751,7 @@ func TestTransactionListFilterFlagsUseAndSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected profile setup to succeed: %v", err)
 	}
-	stdout, stderr, err := executeCommand("--json", "transaction", "list", "--last", "7d", "--limit", "4", "--status", "declined", "--amount", "12.30", "--payment", "Visa XXXX1111")
+	stdout, stderr, err := executeCommand("--json", "transaction", "list", "--last", "7d", "--limit", "4", "--status", "declined", "--amount", "0012.30", "--payment", "Visa XXXX1111")
 	if err != nil {
 		t.Fatalf("expected transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
 	}
@@ -1966,6 +1966,27 @@ func TestTransactionUnsettledListAppliesLimitAfterSort(t *testing.T) {
 
 	assertTransactionIDs(t, stdout, "9006", "9005", "9004")
 	assertContains(t, stdout, `"returned_count": 3`)
+	assertContains(t, stdout, `"has_more": true`)
+}
+
+func TestTransactionUnsettledListFilterPreservesCandidateLimitForSort(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newUnsettledSortingLimitTestServer(t)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "transaction", "unsettled", "list", "--limit", "2", "--status", "declined", "--sort-by", "amount", "--sort-order", "ascending")
+	if err != nil {
+		t.Fatalf("expected unsettled transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertTransactionIDs(t, stdout, "9005", "9002")
+	assertContains(t, stdout, `"returned_count": 2`)
 	assertContains(t, stdout, `"has_more": true`)
 }
 
