@@ -1161,11 +1161,12 @@ func runTransactionList(cmd *cobra.Command, listOptions *transactionListOptions)
 				data.Message = message.Text
 				return renderTransactionListFailure(cmd, "transaction list", response.Messages.ResultCode, data)
 			}
-			if len(response.Transactions) >= pageLimit {
-				hasMoreCandidates = true
-			}
 			data.Transactions = append(data.Transactions, filterTransactionListItems(transactionListItems(response.Transactions, batch.BatchID.String()), filterOptions)...)
-			if filterOptions.empty() || len(response.Transactions) < pageLimit || transactionListCanStopAfterFilteredLimit(data.Transactions, limit, sortOptions) {
+			canStopAfterFilteredLimit := transactionListCanStopAfterFilteredLimit(data.Transactions, limit, sortOptions)
+			if filterOptions.empty() || len(response.Transactions) < pageLimit || canStopAfterFilteredLimit {
+				if len(response.Transactions) >= pageLimit && (filterOptions.empty() || canStopAfterFilteredLimit) {
+					hasMoreCandidates = true
+				}
 				break
 			}
 		}
@@ -1230,11 +1231,12 @@ func runTransactionUnsettledList(cmd *cobra.Command, listOptions *transactionUns
 		if !strings.EqualFold(response.Messages.ResultCode, "Ok") {
 			return renderTransactionListFailure(cmd, "transaction unsettled list", response.Messages.ResultCode, data)
 		}
-		if len(response.Transactions) >= candidateLimit {
-			hasMoreCandidates = true
-		}
 		data.Transactions = append(data.Transactions, filterTransactionListItems(transactionListItems(response.Transactions, ""), filterOptions)...)
-		if filterOptions.empty() || len(response.Transactions) < candidateLimit || transactionListCanStopAfterFilteredLimit(data.Transactions, limit, sortOptions) {
+		canStopAfterFilteredLimit := transactionListCanStopAfterFilteredLimit(data.Transactions, limit, sortOptions)
+		if filterOptions.empty() || len(response.Transactions) < candidateLimit || canStopAfterFilteredLimit {
+			if len(response.Transactions) >= candidateLimit && (filterOptions.empty() || canStopAfterFilteredLimit) {
+				hasMoreCandidates = true
+			}
 			break
 		}
 	}

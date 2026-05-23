@@ -1758,6 +1758,7 @@ func TestTransactionListFilterFlagsUseAndSemantics(t *testing.T) {
 
 	assertTransactionIDs(t, stdout, "1001")
 	assertContains(t, stdout, `"returned_count": 1`)
+	assertContains(t, stdout, `"has_more": false`)
 }
 
 func TestTransactionFiltersUseFlagEnvironmentConfigPrecedence(t *testing.T) {
@@ -1946,6 +1947,55 @@ func TestTransactionUnsettledListFilterFetchesAdditionalPages(t *testing.T) {
 
 	assertTransactionIDs(t, stdout, "9004", "9003")
 	assertContains(t, stdout, `"returned_count": 2`)
+}
+
+func TestTransactionUnsettledListFilterReportsNoMoreAfterExhaustion(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getUnsettledTransactionListRequest"`,
+			AlsoWant: []string{
+				`"limit":2`,
+				`"offset":1`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "9001", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-18T01:00:00Z", "settleAmount": 1.00},
+					{"transId": "9002", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-18T02:00:00Z", "settleAmount": 2.00}
+				]
+			}`,
+		},
+		{
+			Want: `"getUnsettledTransactionListRequest"`,
+			AlsoWant: []string{
+				`"limit":2`,
+				`"offset":2`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "9003", "transactionStatus": "declined", "submitTimeUTC": "2026-05-18T03:00:00Z", "settleAmount": 3.00}
+				]
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "transaction", "unsettled", "list", "--limit", "2", "--status", "declined")
+	if err != nil {
+		t.Fatalf("expected unsettled transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertTransactionIDs(t, stdout, "9003")
+	assertContains(t, stdout, `"returned_count": 1`)
+	assertContains(t, stdout, `"has_more": false`)
 }
 
 func TestTransactionUnsettledListAppliesLimitAfterSort(t *testing.T) {
