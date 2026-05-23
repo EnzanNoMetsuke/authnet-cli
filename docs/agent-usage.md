@@ -25,7 +25,7 @@ Use the JSON envelope and exit-code taxonomy for control flow. Do not parse huma
 
 ## Preferences
 
-Durable user preferences are non-secret config only. Supported preferences in this release are `preferences.color` and nested transaction list sorting preferences in `config.yaml`:
+Durable user preferences are non-secret config only. Supported preferences in this release are `preferences.color` plus nested transaction list sorting and filtering preferences in `config.yaml`:
 
 ```yaml
 preferences:
@@ -33,11 +33,15 @@ preferences:
   transaction_list:
     sort_by: timestamp
     sort_order: descending
+    filter:
+      status: declined
+      amount: 1.23
+      payment: Visa XXXX1111
 ```
 
-`preferences.color` supports `auto`, `always`, or `never`. `preferences.transaction_list.sort_by` supports `timestamp`, `transaction_id`, or `amount`. `preferences.transaction_list.sort_order` supports `ascending` or `descending`.
+`preferences.color` supports `auto`, `always`, or `never`. `preferences.transaction_list.sort_by` supports `timestamp`, `transaction_id`, or `amount`. `preferences.transaction_list.sort_order` supports `ascending` or `descending`. Transaction list filters are exact-match only: status must be an Authorize.Net `transactionStatusEnum` value, amount must be a positive integer or decimal with up to two decimal places, and payment must be a canonical redacted card summary such as `Visa XXXX1111`.
 
-Precedence is: explicit command-line flags, automation safety overrides where applicable, environment overrides such as `AUTHNET_COLOR`, `AUTHNET_TX_SORT_BY`, and `AUTHNET_TX_SORT_ORDER`, durable preferences, then built-in defaults. Automation should still prefer `--automation`; it forces JSON output and no color regardless of persisted preferences.
+Precedence is: explicit command-line flags, automation safety overrides where applicable, environment overrides such as `AUTHNET_COLOR`, `AUTHNET_TX_SORT_BY`, `AUTHNET_TX_SORT_ORDER`, `AUTHNET_TX_FILTER_STATUS`, `AUTHNET_TX_FILTER_AMOUNT`, and `AUTHNET_TX_FILTER_PAYMENT`, durable preferences, then built-in defaults. Automation should still prefer `--automation`; it forces JSON output and no color regardless of persisted preferences.
 
 ## Profiles
 
