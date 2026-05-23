@@ -199,3 +199,12 @@ make test-sandbox-integration
 ```
 
 Contributor expectations are documented in [CONTRIBUTING.md](CONTRIBUTING.md). Agent and automation usage is documented in [docs/agent-usage.md](docs/agent-usage.md). Sandbox integration CI is documented in [docs/sandbox-integration-ci.md](docs/sandbox-integration-ci.md). Release workflow details are documented in [docs/release.md](docs/release.md). Response-code reference maintenance is documented in [docs/response-code-reference.md](docs/response-code-reference.md).
+
+## License
+
+`authnet-cli` is released under the MIT License. 
+
+See [LICENSE](LICENSE) for the full license text and [TRADEMARK](TRADEMARK.md) for the full trademark policy.
+
+- **Code:** The source code, configuration files, and documentation in this repository are available under the MIT License. You are free to use, modify, and distribute the code as long as you include the original copyright notice.
+- The "authnet-cli" name, the "authnet-cli" brand, and the "authnet-cli" logo are trademarks of Exigentix LLC and are **not** covered by the MIT License.

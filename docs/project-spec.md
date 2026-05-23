@@ -16,7 +16,7 @@ The primary v1 user is the **Operator**: a person using the CLI to inspect or pe
 
 The repository/project name is `authnet-cli`. The executable name is `authnet`.
 
-The project license is MIT.
+The project license is MIT. See [LICENSE](../LICENSE) for the full license text and trademark exception.
 
 ## V1 Scope
 

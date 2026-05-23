@@ -39,6 +39,7 @@ archives:
         formats:
           - zip
     files:
+      - LICENSE
       - README.md
       - docs/project-spec.md
       - docs/safety-model.md
