@@ -19,13 +19,16 @@ import (
 )
 
 const (
-	defaultTransactionListLimit = 25
-	maxTransactionListLimit     = 100
-	defaultTransactionLastRange = "24h"
-	defaultTransactionSortBy    = "timestamp"
-	defaultTransactionSortOrder = "descending"
-	transactionSortByEnvName    = "AUTHNET_TX_SORT_BY"
-	transactionSortOrderEnvName = "AUTHNET_TX_SORT_ORDER"
+	defaultTransactionListLimit     = 25
+	maxTransactionListLimit         = 100
+	defaultTransactionLastRange     = "24h"
+	defaultTransactionSortBy        = "timestamp"
+	defaultTransactionSortOrder     = "descending"
+	transactionSortByEnvName        = "AUTHNET_TX_SORT_BY"
+	transactionSortOrderEnvName     = "AUTHNET_TX_SORT_ORDER"
+	transactionFilterStatusEnvName  = "AUTHNET_TX_FILTER_STATUS"
+	transactionFilterAmountEnvName  = "AUTHNET_TX_FILTER_AMOUNT"
+	transactionFilterPaymentEnvName = "AUTHNET_TX_FILTER_PAYMENT"
 )
 
 var nowFunc = time.Now
@@ -498,6 +501,9 @@ func newTransactionCommand() *cobra.Command {
 	list.Flags().BoolVar(&listOptions.UTC, "utc", false, "show transaction timestamps in UTC")
 	list.Flags().StringVar(&listOptions.SortBy, "sort-by", "", "sort transactions by timestamp, transaction_id, or amount")
 	list.Flags().StringVar(&listOptions.SortOrder, "sort-order", "", "sort transactions ascending or descending")
+	list.Flags().StringVar(&listOptions.FilterStatus, "status", "", "filter transactions by exact normalized status")
+	list.Flags().StringVar(&listOptions.FilterAmount, "amount", "", "filter transactions by exact settled amount")
+	list.Flags().StringVar(&listOptions.FilterPayment, "payment", "", "filter transactions by exact redacted card summary")
 	transaction.AddCommand(list)
 
 	unsettled := &cobra.Command{
@@ -518,6 +524,9 @@ func newTransactionCommand() *cobra.Command {
 	unsettledList.Flags().BoolVar(&unsettledOptions.UTC, "utc", false, "show transaction timestamps in UTC")
 	unsettledList.Flags().StringVar(&unsettledOptions.SortBy, "sort-by", "", "sort transactions by timestamp, transaction_id, or amount")
 	unsettledList.Flags().StringVar(&unsettledOptions.SortOrder, "sort-order", "", "sort transactions ascending or descending")
+	unsettledList.Flags().StringVar(&unsettledOptions.FilterStatus, "status", "", "filter transactions by exact normalized status")
+	unsettledList.Flags().StringVar(&unsettledOptions.FilterAmount, "amount", "", "filter transactions by exact settled amount")
+	unsettledList.Flags().StringVar(&unsettledOptions.FilterPayment, "payment", "", "filter transactions by exact redacted card summary")
 	unsettled.AddCommand(unsettledList)
 	transaction.AddCommand(unsettled)
 
@@ -713,20 +722,26 @@ type customerProfileGetOptions struct {
 }
 
 type transactionListOptions struct {
-	From      string
-	To        string
-	Last      string
-	Limit     int
-	UTC       bool
-	SortBy    string
-	SortOrder string
+	From          string
+	To            string
+	Last          string
+	Limit         int
+	UTC           bool
+	SortBy        string
+	SortOrder     string
+	FilterStatus  string
+	FilterAmount  string
+	FilterPayment string
 }
 
 type transactionUnsettledListOptions struct {
-	Limit     int
-	UTC       bool
-	SortBy    string
-	SortOrder string
+	Limit         int
+	UTC           bool
+	SortBy        string
+	SortOrder     string
+	FilterStatus  string
+	FilterAmount  string
+	FilterPayment string
 }
 
 type profileListData struct {
@@ -1083,6 +1098,10 @@ func runTransactionList(cmd *cobra.Command, listOptions *transactionListOptions)
 	if err != nil {
 		return err
 	}
+	filterOptions, err := resolveTransactionFilterOptions(cmd, listOptions.FilterStatus, listOptions.FilterAmount, listOptions.FilterPayment)
+	if err != nil {
+		return err
+	}
 	resolvedRange, err := resolveTransactionTimeRange(*listOptions, nowFunc())
 	if err != nil {
 		return err
@@ -1124,23 +1143,29 @@ func runTransactionList(cmd *cobra.Command, listOptions *transactionListOptions)
 
 	hasMoreCandidates := false
 	for _, batch := range batches.BatchList {
-		response, err := client.getTransactionList(cmd.Context(), profile.Credentials, batch.BatchID.String(), gatewayPaging{
-			Limit:  limit,
-			Offset: 1,
-		})
-		if err != nil {
-			return err
+		pageLimit := limit
+		for offset := 1; ; offset += pageLimit {
+			response, err := client.getTransactionList(cmd.Context(), profile.Credentials, batch.BatchID.String(), gatewayPaging{
+				Limit:  pageLimit,
+				Offset: offset,
+			})
+			if err != nil {
+				return err
+			}
+			message = firstGatewayMessage(response.Messages.Message)
+			if !strings.EqualFold(response.Messages.ResultCode, "Ok") {
+				data.GatewayMessageCode = message.Code
+				data.Message = message.Text
+				return renderTransactionListFailure(cmd, "transaction list", response.Messages.ResultCode, data)
+			}
+			if len(response.Transactions) >= pageLimit {
+				hasMoreCandidates = true
+			}
+			data.Transactions = append(data.Transactions, filterTransactionListItems(transactionListItems(response.Transactions, batch.BatchID.String()), filterOptions)...)
+			if filterOptions.empty() || len(response.Transactions) < pageLimit || len(data.Transactions) >= limit {
+				break
+			}
 		}
-		message = firstGatewayMessage(response.Messages.Message)
-		if !strings.EqualFold(response.Messages.ResultCode, "Ok") {
-			data.GatewayMessageCode = message.Code
-			data.Message = message.Text
-			return renderTransactionListFailure(cmd, "transaction list", response.Messages.ResultCode, data)
-		}
-		if len(response.Transactions) >= limit {
-			hasMoreCandidates = true
-		}
-		data.Transactions = append(data.Transactions, transactionListItems(response.Transactions, batch.BatchID.String())...)
 	}
 	sortTransactionListItems(data.Transactions, sortOptions)
 	hasMoreCandidates = hasMoreCandidates || len(data.Transactions) > limit
@@ -1161,6 +1186,10 @@ func runTransactionUnsettledList(cmd *cobra.Command, listOptions *transactionUns
 	if err != nil {
 		return err
 	}
+	filterOptions, err := resolveTransactionFilterOptions(cmd, listOptions.FilterStatus, listOptions.FilterAmount, listOptions.FilterPayment)
+	if err != nil {
+		return err
+	}
 
 	options := optionsFromCommand(cmd)
 	profile, err := loadSelectedProfileWithCredentials(options, "transaction unsettled list")
@@ -1171,16 +1200,6 @@ func runTransactionUnsettledList(cmd *cobra.Command, listOptions *transactionUns
 	if err != nil {
 		return err
 	}
-	candidateLimit := transactionListCandidateLimit(limit, sortOptions)
-	response, err := client.getUnsettledTransactionList(cmd.Context(), profile.Credentials, gatewayPaging{
-		Limit:  candidateLimit,
-		Offset: 1,
-	})
-	if err != nil {
-		return err
-	}
-
-	message := firstGatewayMessage(response.Messages.Message)
 	data := transactionListData{
 		ProfileName:               profile.Entry.Name,
 		EnvironmentClassification: profile.Entry.Environment,
@@ -1189,16 +1208,38 @@ func runTransactionUnsettledList(cmd *cobra.Command, listOptions *transactionUns
 		Pagination: transactionListPagination{
 			RequestedLimit: limit,
 		},
-		Transactions:       transactionListItems(response.Transactions, ""),
-		GatewayMessageCode: message.Code,
-		Message:            message.Text,
-		timestampsInUTC:    listOptions.UTC,
+		Transactions:    []transactionListItem{},
+		timestampsInUTC: listOptions.UTC,
 	}
-	if !strings.EqualFold(response.Messages.ResultCode, "Ok") {
-		return renderTransactionListFailure(cmd, "transaction unsettled list", response.Messages.ResultCode, data)
+	candidateLimit := transactionListCandidateLimit(limit, sortOptions)
+	if !filterOptions.empty() {
+		candidateLimit = limit
+	}
+	hasMoreCandidates := false
+	for offset := 1; ; offset += candidateLimit {
+		response, err := client.getUnsettledTransactionList(cmd.Context(), profile.Credentials, gatewayPaging{
+			Limit:  candidateLimit,
+			Offset: offset,
+		})
+		if err != nil {
+			return err
+		}
+		message := firstGatewayMessage(response.Messages.Message)
+		data.GatewayMessageCode = message.Code
+		data.Message = message.Text
+		if !strings.EqualFold(response.Messages.ResultCode, "Ok") {
+			return renderTransactionListFailure(cmd, "transaction unsettled list", response.Messages.ResultCode, data)
+		}
+		if len(response.Transactions) >= candidateLimit {
+			hasMoreCandidates = true
+		}
+		data.Transactions = append(data.Transactions, filterTransactionListItems(transactionListItems(response.Transactions, ""), filterOptions)...)
+		if filterOptions.empty() || len(response.Transactions) < candidateLimit || len(data.Transactions) >= limit {
+			break
+		}
 	}
 	sortTransactionListItems(data.Transactions, sortOptions)
-	data.Pagination.HasMore = len(data.Transactions) > limit || len(response.Transactions) >= candidateLimit
+	data.Pagination.HasMore = len(data.Transactions) > limit || hasMoreCandidates
 	if len(data.Transactions) > limit {
 		data.Transactions = data.Transactions[:limit]
 	}
@@ -1616,10 +1657,26 @@ type transactionSortOptions struct {
 }
 
 type transactionSortPreferences struct {
-	SortBy          string
-	SortBySource    string
-	SortOrder       string
-	SortOrderSource string
+	SortBy              string
+	SortBySource        string
+	SortOrder           string
+	SortOrderSource     string
+	FilterStatus        string
+	FilterStatusSource  string
+	FilterAmount        string
+	FilterAmountSource  string
+	FilterPayment       string
+	FilterPaymentSource string
+}
+
+type transactionFilterOptions struct {
+	Status  string
+	Amount  string
+	Payment string
+}
+
+func (options transactionFilterOptions) empty() bool {
+	return options.Status == "" && options.Amount == "" && options.Payment == ""
 }
 
 func resolveTransactionSortOptions(cmd *cobra.Command, sortBy string, sortOrder string) (transactionSortOptions, error) {
@@ -1658,6 +1715,178 @@ func resolveTransactionSortOptions(cmd *cobra.Command, sortBy string, sortOrder 
 		return transactionSortOptions{}, invalidTransactionSortOrderError(options.Order, sortOrderSource)
 	}
 	return options, nil
+}
+
+func resolveTransactionFilterOptions(cmd *cobra.Command, status string, amount string, payment string) (transactionFilterOptions, error) {
+	var preferences transactionSortPreferences
+	preferencesLoaded := false
+	loadPreferences := func() (transactionSortPreferences, error) {
+		if preferencesLoaded {
+			return preferences, nil
+		}
+		var err error
+		preferences, err = loadTransactionSortPreferences()
+		preferencesLoaded = true
+		return preferences, err
+	}
+
+	resolvedStatus, statusSource, err := resolveTransactionFilterValue(cmd, "status", status, transactionFilterStatusEnvName, loadPreferences)
+	if err != nil {
+		return transactionFilterOptions{}, err
+	}
+	resolvedAmount, amountSource, err := resolveTransactionFilterValue(cmd, "amount", amount, transactionFilterAmountEnvName, loadPreferences)
+	if err != nil {
+		return transactionFilterOptions{}, err
+	}
+	resolvedPayment, paymentSource, err := resolveTransactionFilterValue(cmd, "payment", payment, transactionFilterPaymentEnvName, loadPreferences)
+	if err != nil {
+		return transactionFilterOptions{}, err
+	}
+
+	options := transactionFilterOptions{
+		Status:  strings.TrimSpace(resolvedStatus),
+		Amount:  strings.TrimSpace(resolvedAmount),
+		Payment: strings.TrimSpace(resolvedPayment),
+	}
+	if options.Status != "" && !validTransactionFilterStatus(options.Status) {
+		return transactionFilterOptions{}, invalidTransactionFilterStatusError(options.Status, statusSource)
+	}
+	if options.Amount != "" {
+		normalized, err := normalizeTransactionFilterAmount(options.Amount)
+		if err != nil {
+			return transactionFilterOptions{}, invalidTransactionFilterAmountError(options.Amount, amountSource)
+		}
+		options.Amount = normalized
+	}
+	if options.Payment != "" && !validTransactionFilterPayment(options.Payment) {
+		return transactionFilterOptions{}, invalidTransactionFilterPaymentError(options.Payment, paymentSource)
+	}
+	return options, nil
+}
+
+func resolveTransactionFilterValue(cmd *cobra.Command, flagName string, flagValue string, envName string, loadPreferences func() (transactionSortPreferences, error)) (string, string, error) {
+	if cmd.Flags().Lookup(flagName).Changed {
+		return strings.TrimSpace(flagValue), "--" + flagName, nil
+	}
+	if envValue := strings.TrimSpace(os.Getenv(envName)); envValue != "" {
+		return envValue, envName, nil
+	}
+	preferences, err := loadPreferences()
+	if err != nil {
+		return "", "", err
+	}
+	switch flagName {
+	case "status":
+		if preferences.FilterStatus != "" {
+			return preferences.FilterStatus, preferences.FilterStatusSource, nil
+		}
+	case "amount":
+		if preferences.FilterAmount != "" {
+			return preferences.FilterAmount, preferences.FilterAmountSource, nil
+		}
+	case "payment":
+		if preferences.FilterPayment != "" {
+			return preferences.FilterPayment, preferences.FilterPaymentSource, nil
+		}
+	}
+	return "", "default", nil
+}
+
+func validTransactionFilterStatus(value string) bool {
+	switch value {
+	case "approvedReview",
+		"authorizedPendingCapture",
+		"authorizedPendingRelease",
+		"capturedPendingSettlement",
+		"chargeback",
+		"chargebackReversal",
+		"communicationError",
+		"couldNotVoid",
+		"declined",
+		"expired",
+		"failedReview",
+		"FDSPendingReview",
+		"FDSAuthorizedPendingReview",
+		"generalError",
+		"pendingFinalSettlement",
+		"pendingSettlement",
+		"refundPendingSettlement",
+		"refundSettledSuccessfully",
+		"returnedItem",
+		"settledSuccessfully",
+		"settlementError",
+		"underReview",
+		"updatingSettlement",
+		"voided":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeTransactionFilterAmount(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.Contains(value, "$") {
+		return "", fmt.Errorf("invalid amount")
+	}
+	whole, fraction, hasFraction := strings.Cut(value, ".")
+	if whole == "" || strings.HasPrefix(whole, "+") || strings.HasPrefix(whole, "-") {
+		return "", fmt.Errorf("invalid amount")
+	}
+	if !allDigits(whole) {
+		return "", fmt.Errorf("invalid amount")
+	}
+	if !hasFraction {
+		if amount, err := strconv.ParseFloat(whole, 64); err != nil || amount <= 0 {
+			return "", fmt.Errorf("invalid amount")
+		}
+		return whole + ".00", nil
+	}
+	if fraction == "" || len(fraction) > 2 || !allDigits(fraction) {
+		return "", fmt.Errorf("invalid amount")
+	}
+	normalized := whole + "." + fraction + strings.Repeat("0", 2-len(fraction))
+	if amount, err := strconv.ParseFloat(normalized, 64); err != nil || amount <= 0 {
+		return "", fmt.Errorf("invalid amount")
+	}
+	return normalized, nil
+}
+
+func allDigits(value string) bool {
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return value != ""
+}
+
+func validTransactionFilterPayment(value string) bool {
+	cardType, accountNumber, ok := strings.Cut(strings.TrimSpace(value), " ")
+	if !ok || strings.Contains(accountNumber, " ") {
+		return false
+	}
+	switch cardType {
+	case "Visa", "MasterCard", "AmericanExpress", "Discover", "DinersClub", "JCB":
+	default:
+		return false
+	}
+	if len(accountNumber) != 8 || !strings.HasPrefix(accountNumber, "XXXX") {
+		return false
+	}
+	return allDigits(accountNumber[4:])
+}
+
+func invalidTransactionFilterStatusError(value string, source string) error {
+	return newUsageError("invalid %s value %q: expected Authorize.Net transactionStatusEnum value", source, value)
+}
+
+func invalidTransactionFilterAmountError(value string, source string) error {
+	return newUsageError("invalid %s value %q: expected positive integer or decimal amount with up to two decimal places", source, value)
+}
+
+func invalidTransactionFilterPaymentError(value string, source string) error {
+	return newUsageError("invalid %s value %q: expected <CardType> XXXXdddd for Visa, MasterCard, AmericanExpress, Discover, DinersClub, or JCB", source, value)
 }
 
 func resolveTransactionSortValue(cmd *cobra.Command, flagName string, flagValue string, envName string, defaultValue string, loadPreferences func() (transactionSortPreferences, error)) (string, string, error) {
@@ -1703,6 +1932,18 @@ func loadTransactionSortPreferences() (transactionSortPreferences, error) {
 		preferences.SortOrder = value
 		preferences.SortOrderSource = "preferences.transaction_list.sort_order in " + configPath
 	}
+	if value, ok := nestedStringPreference(file.Preferences, "transaction_list", "filter", "status"); ok {
+		preferences.FilterStatus = value
+		preferences.FilterStatusSource = "preferences.transaction_list.filter.status in " + configPath
+	}
+	if value, ok := nestedStringPreference(file.Preferences, "transaction_list", "filter", "amount"); ok {
+		preferences.FilterAmount = value
+		preferences.FilterAmountSource = "preferences.transaction_list.filter.amount in " + configPath
+	}
+	if value, ok := nestedStringPreference(file.Preferences, "transaction_list", "filter", "payment"); ok {
+		preferences.FilterPayment = value
+		preferences.FilterPaymentSource = "preferences.transaction_list.filter.payment in " + configPath
+	}
 	return preferences, nil
 }
 
@@ -1742,6 +1983,38 @@ func sortTransactionListItems(items []transactionListItem, options transactionSo
 		}
 		return cmp > 0
 	})
+}
+
+func filterTransactionListItems(items []transactionListItem, options transactionFilterOptions) []transactionListItem {
+	if options.empty() {
+		return items
+	}
+	filtered := make([]transactionListItem, 0, len(items))
+	for _, item := range items {
+		if options.Status != "" && item.TransactionStatus != options.Status {
+			continue
+		}
+		if options.Amount != "" && normalizedTransactionItemAmount(item.SettleAmount) != options.Amount {
+			continue
+		}
+		if options.Payment != "" && transactionItemPaymentSummary(item.Payment) != options.Payment {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
+}
+
+func normalizedTransactionItemAmount(value string) string {
+	normalized, err := normalizeTransactionFilterAmount(value)
+	if err != nil {
+		return strings.TrimSpace(value)
+	}
+	return normalized
+}
+
+func transactionItemPaymentSummary(payment paymentSummary) string {
+	return strings.TrimSpace(firstNonEmpty(payment.AccountType, payment.CardType) + " " + payment.AccountNumber)
 }
 
 func compareTransactionPrimarySort(left transactionListItem, right transactionListItem, sortBy string) int {

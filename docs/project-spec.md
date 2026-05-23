@@ -273,6 +273,8 @@ Time-based transaction lists:
 - Sort normalized transaction results by timestamp descending by default.
 - Accept `--sort-by timestamp|transaction_id|amount` and `--sort-order ascending|descending`; the same ordered `transactions` array drives JSON output and human-readable table rows.
 - Honor transaction list sort settings with precedence: command flags, `AUTHNET_TX_SORT_BY` / `AUTHNET_TX_SORT_ORDER`, `preferences.transaction_list.sort_by` / `preferences.transaction_list.sort_order`, then built-in defaults.
+- Accept exact-match `--status`, `--amount`, and `--payment` filters for both settled and unsettled lists; multiple filters combine with AND semantics and sparse filters continue paging until up to `--limit` matching normalized transactions are found or no more gateway pages are available.
+- Honor transaction list filter settings with precedence: command flags, `AUTHNET_TX_FILTER_STATUS` / `AUTHNET_TX_FILTER_AMOUNT` / `AUTHNET_TX_FILTER_PAYMENT`, `preferences.transaction_list.filter.status` / `amount` / `payment`, then no filter.
 - Use transaction ID descending as the deterministic fallback when primary sort values tie or are missing.
 
 ### Customer Profiles
@@ -478,7 +480,7 @@ Do not list deferred future surfaces as non-goals.
 These decisions reflect the current implementation and should be revised deliberately when behavior changes:
 
 - Exact JSON envelope field names and schema-versioning policy: the current JSON envelope uses `schema_version`, `command`, optional `profile_name`, optional `environment_classification`, `redacted`, `warnings`, `errors`, and command-specific `data`; the schema version is explicit release metadata, not automatically derived from the CLI version.
-- Exact config file format: profile metadata is stored as `config.yaml` under the resolved `authnet-cli` config directory, with a version number, optional sandbox default profile, profile environment classification, non-secret credential-source references, and a non-secret preferences section that currently supports `color` and nested `transaction_list` sort preferences. Legacy `profiles.json` files are read compatibly and migrated on the next profile config write.
+- Exact config file format: profile metadata is stored as `config.yaml` under the resolved `authnet-cli` config directory, with a version number, optional sandbox default profile, profile environment classification, non-secret credential-source references, and a non-secret preferences section that currently supports `color` and nested `transaction_list` sort and filter preferences. Legacy `profiles.json` files are read compatibly and migrated on the next profile config write.
 - Exact keychain backend/library: no keychain backend is implemented yet. Secure local references may be recorded as profile metadata, but gateway commands currently require environment credential sources.
 - Exact response-code reference source/update workflow: `authnet response-code explain` uses the checked-in curated reference in `internal/cli/response_codes.go`; updates follow `docs/response-code-reference.md` and should review the official Authorize.Net response-code sources before changing records.
 - Exact bounded-pagination defaults and maximums: transaction list-style commands default to 25 records and reject limits above 100.

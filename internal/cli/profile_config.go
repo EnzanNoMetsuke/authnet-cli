@@ -415,6 +415,33 @@ func validatePreferences(result validationResult, preferences map[string]any) va
 			result.Checks = append(result.Checks, checkRow{"preference transaction list sort order", "failed", fmt.Sprintf("invalid preference transaction_list.sort_order %q: expected ascending or descending", sortOrder)})
 		}
 	}
+	filterStatus, ok := nestedStringPreference(preferences, "transaction_list", "filter", "status")
+	if ok {
+		if validTransactionFilterStatus(filterStatus) {
+			result.Checks = append(result.Checks, checkRow{"preference transaction list filter status", "passed", "transaction list filter status preference is valid"})
+		} else {
+			result.Valid = false
+			result.Checks = append(result.Checks, checkRow{"preference transaction list filter status", "failed", fmt.Sprintf("invalid preference transaction_list.filter.status %q: expected Authorize.Net transactionStatusEnum value", filterStatus)})
+		}
+	}
+	filterAmount, ok := nestedStringPreference(preferences, "transaction_list", "filter", "amount")
+	if ok {
+		if _, err := normalizeTransactionFilterAmount(filterAmount); err == nil {
+			result.Checks = append(result.Checks, checkRow{"preference transaction list filter amount", "passed", "transaction list filter amount preference is valid"})
+		} else {
+			result.Valid = false
+			result.Checks = append(result.Checks, checkRow{"preference transaction list filter amount", "failed", fmt.Sprintf("invalid preference transaction_list.filter.amount %q: expected positive integer or decimal amount with up to two decimal places", filterAmount)})
+		}
+	}
+	filterPayment, ok := nestedStringPreference(preferences, "transaction_list", "filter", "payment")
+	if ok {
+		if validTransactionFilterPayment(filterPayment) {
+			result.Checks = append(result.Checks, checkRow{"preference transaction list filter payment", "passed", "transaction list filter payment preference is valid"})
+		} else {
+			result.Valid = false
+			result.Checks = append(result.Checks, checkRow{"preference transaction list filter payment", "failed", fmt.Sprintf("invalid preference transaction_list.filter.payment %q: expected <CardType> XXXXdddd for Visa, MasterCard, AmericanExpress, Discover, DinersClub, or JCB", filterPayment)})
+		}
+	}
 	return result
 }
 

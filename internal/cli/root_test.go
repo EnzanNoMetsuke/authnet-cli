@@ -110,6 +110,29 @@ func writeTransactionSortPreferenceConfig(t *testing.T, configDir string, sortBy
 	}
 }
 
+func writeTransactionFilterPreferenceConfig(t *testing.T, configDir string, status string, amount any, payment string) {
+	t.Helper()
+	configBytes, err := yaml.Marshal(map[string]any{
+		"version":  profileConfigVersion,
+		"profiles": []profileEntry{},
+		"preferences": map[string]any{
+			"transaction_list": map[string]any{
+				"filter": map[string]any{
+					"status":  status,
+					"amount":  amount,
+					"payment": payment,
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected to marshal profile config fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), configBytes, 0o600); err != nil {
+		t.Fatalf("expected to write profile config fixture: %v", err)
+	}
+}
+
 func writeLegacyProfileConfig(t *testing.T, configDir string) {
 	t.Helper()
 	legacyConfig := `{
@@ -1686,6 +1709,245 @@ func TestTransactionListAppliesLimitAfterGlobalSort(t *testing.T) {
 	assertContains(t, stdout, `"has_more": true`)
 }
 
+func TestTransactionListFilterFlagsUseAndSemantics(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	withFixedNow(t, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getSettledBatchListRequest"`,
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"batchList": [{"batchId": 3003, "settlementState": "settledSuccessfully", "settlementTimeUTC": "2026-05-18T03:00:00Z"}]
+			}`,
+		},
+		{
+			Want: `"getTransactionListRequest"`,
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "1001", "transactionStatus": "declined", "submitTimeUTC": "2026-05-18T01:00:00Z", "settleAmount": 12.30, "accountType": "Visa", "accountNumber": "XXXX1111"},
+					{"transId": "1002", "transactionStatus": "settledSuccessfully", "submitTimeUTC": "2026-05-18T02:00:00Z", "settleAmount": 12.30, "accountType": "Visa", "accountNumber": "XXXX1111"},
+					{"transId": "1003", "transactionStatus": "declined", "submitTimeUTC": "2026-05-18T03:00:00Z", "settleAmount": 12.31, "accountType": "Visa", "accountNumber": "XXXX1111"},
+					{"transId": "1004", "transactionStatus": "declined", "submitTimeUTC": "2026-05-18T04:00:00Z", "settleAmount": 12.30, "accountType": "MasterCard", "accountNumber": "XXXX2222"}
+				]
+			}`,
+		},
+		{
+			Want: `"getTransactionListRequest"`,
+			AlsoWant: []string{
+				`"offset":5`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": []
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "transaction", "list", "--last", "7d", "--limit", "4", "--status", "declined", "--amount", "12.30", "--payment", "Visa XXXX1111")
+	if err != nil {
+		t.Fatalf("expected transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertTransactionIDs(t, stdout, "1001")
+	assertContains(t, stdout, `"returned_count": 1`)
+}
+
+func TestTransactionFiltersUseFlagEnvironmentConfigPrecedence(t *testing.T) {
+	tests := []struct {
+		name      string
+		setup     func(t *testing.T, configDir string)
+		args      []string
+		wantTrans string
+	}{
+		{
+			name: "config",
+			setup: func(t *testing.T, configDir string) {
+				writeTransactionFilterPreferenceConfig(t, configDir, "declined", 12, "Visa XXXX1111")
+			},
+			args:      []string{"--json", "transaction", "list", "--last", "7d", "--limit", "4"},
+			wantTrans: "1001",
+		},
+		{
+			name: "environment overrides config",
+			setup: func(t *testing.T, configDir string) {
+				writeTransactionFilterPreferenceConfig(t, configDir, "declined", 12, "Visa XXXX1111")
+				t.Setenv(transactionFilterStatusEnvName, "settledSuccessfully")
+				t.Setenv(transactionFilterAmountEnvName, "2.50")
+				t.Setenv(transactionFilterPaymentEnvName, "MasterCard XXXX2222")
+			},
+			args:      []string{"--json", "transaction", "list", "--last", "7d", "--limit", "4"},
+			wantTrans: "1002",
+		},
+		{
+			name: "flags override environment and config",
+			setup: func(t *testing.T, configDir string) {
+				writeTransactionFilterPreferenceConfig(t, configDir, "declined", 12, "Visa XXXX1111")
+				t.Setenv(transactionFilterStatusEnvName, "settledSuccessfully")
+				t.Setenv(transactionFilterAmountEnvName, "2.50")
+				t.Setenv(transactionFilterPaymentEnvName, "MasterCard XXXX2222")
+			},
+			args:      []string{"--json", "transaction", "list", "--last", "7d", "--limit", "4", "--status", "refundSettledSuccessfully", "--amount", "3", "--payment", "Discover XXXX3333"},
+			wantTrans: "1003",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			configDir := t.TempDir()
+			t.Setenv(configEnvName, configDir)
+			t.Setenv(apiLoginIDEnvName, "secret-login")
+			t.Setenv(transactionKeyEnvName, "secret-key")
+			test.setup(t, configDir)
+			withFixedNow(t, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+			server := newReportingTestServer(t, []reportingResponse{
+				{
+					Want: `"getSettledBatchListRequest"`,
+					Body: `{
+						"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+						"batchList": [{"batchId": 3003, "settlementState": "settledSuccessfully", "settlementTimeUTC": "2026-05-18T03:00:00Z"}]
+					}`,
+				},
+				{
+					Want: `"getTransactionListRequest"`,
+					Body: `{
+						"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+						"transactions": [
+							{"transId": "1001", "transactionStatus": "declined", "submitTimeUTC": "2026-05-18T01:00:00Z", "settleAmount": 12.00, "accountType": "Visa", "accountNumber": "XXXX1111"},
+							{"transId": "1002", "transactionStatus": "settledSuccessfully", "submitTimeUTC": "2026-05-18T02:00:00Z", "settleAmount": 2.50, "accountType": "MasterCard", "accountNumber": "XXXX2222"},
+							{"transId": "1003", "transactionStatus": "refundSettledSuccessfully", "submitTimeUTC": "2026-05-18T03:00:00Z", "settleAmount": 3.00, "accountType": "Discover", "accountNumber": "XXXX3333"}
+						]
+					}`,
+				},
+			})
+			withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+			_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+			if err != nil {
+				t.Fatalf("expected profile setup to succeed: %v", err)
+			}
+			stdout, stderr, err := executeCommand(test.args...)
+			if err != nil {
+				t.Fatalf("expected transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+			}
+
+			assertTransactionIDs(t, stdout, test.wantTrans)
+		})
+	}
+}
+
+func TestTransactionListFilterFetchesAdditionalSettledPages(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	withFixedNow(t, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getSettledBatchListRequest"`,
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"batchList": [{"batchId": 3003, "settlementState": "settledSuccessfully", "settlementTimeUTC": "2026-05-18T03:00:00Z"}]
+			}`,
+		},
+		{
+			Want: `"getTransactionListRequest"`,
+			AlsoWant: []string{
+				`"limit":2`,
+				`"offset":1`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "1001", "transactionStatus": "settledSuccessfully", "submitTimeUTC": "2026-05-18T01:00:00Z", "settleAmount": 1.00},
+					{"transId": "1002", "transactionStatus": "settledSuccessfully", "submitTimeUTC": "2026-05-18T02:00:00Z", "settleAmount": 2.00}
+				]
+			}`,
+		},
+		{
+			Want: `"getTransactionListRequest"`,
+			AlsoWant: []string{
+				`"limit":2`,
+				`"offset":3`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "1003", "transactionStatus": "declined", "submitTimeUTC": "2026-05-18T03:00:00Z", "settleAmount": 3.00},
+					{"transId": "1004", "transactionStatus": "declined", "submitTimeUTC": "2026-05-18T04:00:00Z", "settleAmount": 4.00}
+				]
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "transaction", "list", "--last", "7d", "--limit", "2", "--status", "declined")
+	if err != nil {
+		t.Fatalf("expected transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertTransactionIDs(t, stdout, "1004", "1003")
+	assertContains(t, stdout, `"returned_count": 2`)
+}
+
+func TestTransactionUnsettledListFilterFetchesAdditionalPages(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getUnsettledTransactionListRequest"`,
+			AlsoWant: []string{
+				`"limit":2`,
+				`"offset":1`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "9001", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-18T01:00:00Z", "settleAmount": 1.00},
+					{"transId": "9002", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-18T02:00:00Z", "settleAmount": 2.00}
+				]
+			}`,
+		},
+		{
+			Want: `"getUnsettledTransactionListRequest"`,
+			AlsoWant: []string{
+				`"limit":2`,
+				`"offset":3`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "9003", "transactionStatus": "declined", "submitTimeUTC": "2026-05-18T03:00:00Z", "settleAmount": 3.00},
+					{"transId": "9004", "transactionStatus": "declined", "submitTimeUTC": "2026-05-18T04:00:00Z", "settleAmount": 4.00}
+				]
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "transaction", "unsettled", "list", "--limit", "2", "--status", "declined")
+	if err != nil {
+		t.Fatalf("expected unsettled transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertTransactionIDs(t, stdout, "9004", "9003")
+	assertContains(t, stdout, `"returned_count": 2`)
+}
+
 func TestTransactionUnsettledListAppliesLimitAfterSort(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 	t.Setenv(apiLoginIDEnvName, "secret-login")
@@ -1907,6 +2169,70 @@ func TestTransactionSortValidationRejectsInvalidSources(t *testing.T) {
 			stdout, _, code, err := executeCommandWithExit(test.args...)
 			if err == nil {
 				t.Fatal("expected invalid transaction sort configuration to fail")
+			}
+			if code != exitUsageOrConfig {
+				t.Fatalf("expected usage/config exit, got %d\nstdout:\n%s", code, stdout)
+			}
+			assertContains(t, stdout, test.message)
+		})
+	}
+}
+
+func TestTransactionFilterValidationRejectsInvalidSources(t *testing.T) {
+	tests := []struct {
+		name    string
+		setup   func(t *testing.T)
+		args    []string
+		message string
+	}{
+		{
+			name:    "flag amount",
+			setup:   func(t *testing.T) { t.Setenv(configEnvName, t.TempDir()) },
+			args:    []string{"--json", "transaction", "list", "--last", "7d", "--amount", "$1.23"},
+			message: `invalid --amount value \"$1.23\": expected positive integer or decimal amount with up to two decimal places`,
+		},
+		{
+			name: "environment payment",
+			setup: func(t *testing.T) {
+				t.Setenv(configEnvName, t.TempDir())
+				t.Setenv(transactionFilterPaymentEnvName, "Visa 1111")
+			},
+			args:    []string{"--json", "transaction", "list", "--last", "7d"},
+			message: `invalid AUTHNET_TX_FILTER_PAYMENT value \"Visa 1111\": expected <CardType> XXXXdddd`,
+		},
+		{
+			name: "official status value",
+			setup: func(t *testing.T) {
+				t.Setenv(configEnvName, t.TempDir())
+			},
+			args:    []string{"--json", "transaction", "list", "--last", "7d", "--status", "pendingFinalSettlement"},
+			message: `invalid --status`,
+		},
+		{
+			name: "config invalid status",
+			setup: func(t *testing.T) {
+				configDir := t.TempDir()
+				t.Setenv(configEnvName, configDir)
+				writeTransactionFilterPreferenceConfig(t, configDir, "pendingReview", "1.23", "Visa XXXX1111")
+			},
+			args:    []string{"--json", "transaction", "list", "--last", "7d"},
+			message: `preferences.transaction_list.filter.status`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			test.setup(t)
+
+			stdout, _, code, err := executeCommandWithExit(test.args...)
+			if test.name == "official status value" {
+				if err == nil {
+					t.Fatal("expected command to fail before gateway call due to missing profile, after accepting the status")
+				}
+				assertNotContains(t, stdout, test.message)
+				return
+			}
+			if err == nil {
+				t.Fatal("expected invalid transaction filter configuration to fail")
 			}
 			if code != exitUsageOrConfig {
 				t.Fatalf("expected usage/config exit, got %d\nstdout:\n%s", code, stdout)
@@ -2699,6 +3025,23 @@ func TestConfigValidateChecksTransactionSortPreferences(t *testing.T) {
 	}
 	assertContains(t, stdout, `invalid preference transaction_list.sort_by \"status\"`)
 	assertContains(t, stdout, `invalid preference transaction_list.sort_order \"sideways\"`)
+}
+
+func TestConfigValidateChecksTransactionFilterPreferences(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	writeTransactionFilterPreferenceConfig(t, configDir, "pendingReview", "$1.23", "Visa 1111")
+
+	stdout, stderr, code, err := executeCommandWithExit("--json", "config", "validate")
+	if err == nil {
+		t.Fatal("expected config validate to fail for invalid transaction filter preferences")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected config validate usage exit, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `invalid preference transaction_list.filter.status \"pendingReview\"`)
+	assertContains(t, stdout, `invalid preference transaction_list.filter.amount \"$1.23\"`)
+	assertContains(t, stdout, `invalid preference transaction_list.filter.payment \"Visa 1111\"`)
 }
 
 func TestProfileSetupWritesUnifiedYAMLConfigWithoutSecrets(t *testing.T) {
