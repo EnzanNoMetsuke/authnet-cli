@@ -1007,6 +1007,9 @@ func renderRawGatewayResponse(cmd *cobra.Command, rawResponse []byte) error {
 			Redacted: boolPointer(false),
 		})
 	}
+	if err := renderHumanWarnings(cmd.ErrOrStderr(), optionsFromCommand(cmd).PreferenceWarnings, colorEnabled(optionsFromCommand(cmd))); err != nil {
+		return err
+	}
 	_, err := fmt.Fprintln(cmd.OutOrStdout(), string(trimmed))
 	return err
 }

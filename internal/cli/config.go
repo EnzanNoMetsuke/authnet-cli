@@ -20,12 +20,19 @@ const (
 	configKeyNoColor     = "no-color"
 	configKeyConfigDir   = "config-dir"
 	preferenceKeyColor   = "color"
+	preferenceModeAlways = "always"
+	preferenceModeNever  = "never"
 )
 
 type cliConfig struct {
-	viper               *viper.Viper
-	colorPreferenceSet  bool
-	colorPreferencePath string
+	viper                     *viper.Viper
+	configPath                string
+	colorPreferenceSet        bool
+	colorPreferencePath       string
+	jsonPreferenceSet         bool
+	jsonPreferenceValue       string
+	automationPreferenceSet   bool
+	automationPreferenceValue string
 }
 
 func newCLIConfig(flags *pflag.FlagSet) (*cliConfig, error) {
@@ -82,6 +89,30 @@ func (config *cliConfig) applyPreferences() error {
 		config.colorPreferenceSet = true
 		config.colorPreferencePath = filepath.Join(dir, profileConfigFileName)
 	}
+	config.configPath = filepath.Join(dir, profileConfigFileName)
+	if value, ok := stringPreference(file.Preferences, configKeyJSON); ok {
+		config.jsonPreferenceSet = true
+		config.jsonPreferenceValue = value
+		if value == preferenceModeAlways {
+			config.viper.SetDefault(configKeyJSON, true)
+		}
+		if value == preferenceModeNever {
+			config.viper.SetDefault(configKeyJSON, false)
+		}
+	}
+	if value, ok := stringPreference(file.Preferences, configKeyAutomation); ok {
+		config.automationPreferenceSet = true
+		config.automationPreferenceValue = value
+		if value == preferenceModeAlways {
+			config.viper.SetDefault(configKeyAutomation, true)
+		}
+		if value == preferenceModeNever {
+			config.viper.SetDefault(configKeyAutomation, false)
+		}
+	}
+	if config.jsonPreferenceValue == preferenceModeAlways && config.automationPreferenceValue == preferenceModeAlways {
+		config.viper.SetDefault(configKeyAutomation, true)
+	}
 	return nil
 }
 
@@ -93,6 +124,38 @@ func (config *cliConfig) applyGlobalOptions(options *globalOptions) {
 	options.RawResponse = config.viper.GetBool(configKeyRawResponse)
 	options.Color = strings.TrimSpace(config.viper.GetString(configKeyColor))
 	options.NoColor = config.viper.GetBool(configKeyNoColor)
+	options.PreferenceWarnings = config.outputModePreferenceWarnings()
+}
+
+func (config *cliConfig) outputModePreferenceWarnings() []warning {
+	if config.jsonPreferenceValue != preferenceModeAlways || config.automationPreferenceValue != preferenceModeAlways {
+		return nil
+	}
+	return []warning{{
+		Code:    "output_mode_preference_conflict",
+		Message: "preferences.json and preferences.automation are both always in config.yaml; they are mutually exclusive at the preference layer, automation takes precedence at that layer, and one preference should be removed.",
+	}}
+}
+
+func (config *cliConfig) rawResponsePreferenceWarnings() []warning {
+	ignored := []string{}
+	if config.jsonPreferenceValue == preferenceModeNever {
+		ignored = append(ignored, "preferences.json")
+	}
+	if config.automationPreferenceValue == preferenceModeNever {
+		ignored = append(ignored, "preferences.automation")
+	}
+	if len(ignored) == 0 {
+		return nil
+	}
+	verb := "is"
+	if len(ignored) > 1 {
+		verb = "are"
+	}
+	return []warning{{
+		Code:    "raw_response_preference_ignored",
+		Message: strings.Join(ignored, " and ") + " " + verb + " set to never in config.yaml but ignored so the raw gateway JSON can be presented accurately.",
+	}}
 }
 
 func configuredAuthnetConfigDir() (string, error) {

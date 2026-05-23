@@ -132,6 +132,7 @@ Raw response mode:
   - `authnet transaction get TRANSACTION_ID`
 - Unsupported commands fail clearly when `--raw-response` is provided.
 - JSON raw-response output uses the standard envelope with `redacted: false` and `data.raw_gateway_response`.
+- If `--raw-response` is used while durable JSON or automation preferences are `never`, the CLI warns that those preferences are ignored so raw gateway JSON is presented accurately.
 
 Dry-run mode:
 
@@ -157,6 +158,14 @@ Global output flags:
 - `--automation` implies JSON output, no color, no prompts, no TUI or wizard behavior, structured failures on stdout, and the exit-code taxonomy.
 - `--color=auto|always|never` controls ANSI color.
 - `--no-color` is an alias for `--color=never`.
+
+Durable output preferences may select JSON or automation mode by default:
+
+- `preferences.json: always|never`
+- `preferences.automation: always|never`
+- `AUTHNET_JSON` and `AUTHNET_AUTOMATION` are boolean environment overrides between command-line flags and durable preferences.
+- Output-mode precedence is command-line flags, environment overrides, durable preferences, then built-in defaults.
+- If both durable output preferences are `always`, automation takes precedence at the preference layer and the command emits a warning until one preference is removed.
 
 JSON is uncolored by default. Human operators may explicitly request colored JSON, for example with `--json --color=always`. Automation mode always disables color.
 
@@ -479,8 +488,8 @@ Do not list deferred future surfaces as non-goals.
 
 These decisions reflect the current implementation and should be revised deliberately when behavior changes:
 
-- Exact JSON envelope field names and schema-versioning policy: the current JSON envelope uses `schema_version`, `command`, optional `profile_name`, optional `environment_classification`, `redacted`, `warnings`, `errors`, and command-specific `data`; the schema version is explicit release metadata, not automatically derived from the CLI version.
-- Exact config file format: profile metadata is stored as `config.yaml` under the resolved `authnet-cli` config directory, with a version number, optional sandbox default profile, profile environment classification, non-secret credential-source references, and a non-secret preferences section that currently supports `color` and nested `transaction_list` sort and filter preferences. Legacy `profiles.json` files are read compatibly and migrated on the next profile config write.
+- Exact JSON envelope field names and schema-versioning policy: the current JSON envelope uses `schema_version`, `command`, optional `profile_name`, optional `environment_classification`, `redacted`, `warnings`, `errors`, and command-specific `data`; the schema version is explicit release metadata, not automatically derived from the CLI version. Adding output-mode preference warning codes uses the existing `warnings` field and does not require a schema-version bump.
+- Exact config file format: profile metadata is stored as `config.yaml` under the resolved `authnet-cli` config directory, with a version number, optional sandbox default profile, profile environment classification, non-secret credential-source references, and a non-secret preferences section that currently supports `json`, `automation`, `color`, and nested `transaction_list` sort and filter preferences. Legacy `profiles.json` files are read compatibly and migrated on the next profile config write.
 - Exact keychain backend/library: no keychain backend is implemented yet. Secure local references may be recorded as profile metadata, but gateway commands currently require environment credential sources.
 - Exact response-code reference source/update workflow: `authnet response-code explain` uses the checked-in curated reference in `internal/cli/response_codes.go`; updates follow `docs/response-code-reference.md` and should review the official Authorize.Net response-code sources before changing records.
 - Exact bounded-pagination defaults and maximums: transaction list-style commands default to 25 records and reject limits above 100.

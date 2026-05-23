@@ -25,10 +25,12 @@ Use the JSON envelope and exit-code taxonomy for control flow. Do not parse huma
 
 ## Preferences
 
-Durable user preferences are non-secret config only. Supported preferences in this release are `preferences.color` plus nested transaction list sorting and filtering preferences in `config.yaml`:
+Durable user preferences are non-secret config only. Supported preferences in this release include output-mode preferences, `preferences.color`, and nested transaction list sorting and filtering preferences in `config.yaml`:
 
 ```yaml
 preferences:
+  json: never
+  automation: never
   color: auto
   transaction_list:
     sort_by: timestamp
@@ -39,9 +41,11 @@ preferences:
       payment: Visa XXXX1111
 ```
 
+`preferences.json` and `preferences.automation` support `always` or `never`. `preferences.json: always` selects the JSON envelope by default. `preferences.automation: always` selects automation mode by default, including JSON output, no color, no prompts, structured failures on stdout, and stable exit codes. If both durable output preferences are `always`, automation takes precedence at the preference layer and each preference-reading command emits a structured warning until one preference is removed.
+
 `preferences.color` supports `auto`, `always`, or `never`. `preferences.transaction_list.sort_by` supports `timestamp`, `transaction_id`, or `amount`. `preferences.transaction_list.sort_order` supports `ascending` or `descending`. Transaction list filters are exact-match only: status must be an Authorize.Net `transactionStatusEnum` value, amount must be a positive integer or decimal with up to two decimal places, and payment must be a canonical redacted card summary such as `Visa XXXX1111`.
 
-Precedence is: explicit command-line flags, automation safety overrides where applicable, environment overrides such as `AUTHNET_COLOR`, `AUTHNET_TX_SORT_BY`, `AUTHNET_TX_SORT_ORDER`, `AUTHNET_TX_FILTER_STATUS`, `AUTHNET_TX_FILTER_AMOUNT`, and `AUTHNET_TX_FILTER_PAYMENT`, durable preferences, then built-in defaults. Automation should still prefer `--automation`; it forces JSON output and no color regardless of persisted preferences.
+Precedence is: explicit command-line flags, automation safety overrides where applicable, environment overrides such as `AUTHNET_JSON`, `AUTHNET_AUTOMATION`, `AUTHNET_COLOR`, `AUTHNET_TX_SORT_BY`, `AUTHNET_TX_SORT_ORDER`, `AUTHNET_TX_FILTER_STATUS`, `AUTHNET_TX_FILTER_AMOUNT`, and `AUTHNET_TX_FILTER_PAYMENT`, durable preferences, then built-in defaults. Automation should still prefer `--automation`; it forces JSON output and no color regardless of persisted preferences.
 
 ## Profiles
 
@@ -94,7 +98,7 @@ authnet --automation --raw-response --profile sandbox-main auth test
 authnet --automation --raw-response --profile sandbox-main transaction get TRANSACTION_ID
 ```
 
-Those are the only supported raw-response commands. Other commands fail clearly when `--raw-response` is provided.
+Those are the only supported raw-response commands. Other commands fail clearly when `--raw-response` is provided. If raw response mode runs while `preferences.json: never` or `preferences.automation: never` is configured, the CLI warns that those durable preferences are ignored so the gateway JSON can be presented accurately. Bare raw-response mode keeps stdout as the raw gateway JSON and writes warnings to stderr; JSON or automation raw-response mode carries warnings in the envelope.
 
 Sandbox raw output can still contain sensitive-looking test data. Do not save it unless that is necessary for the task and the destination is appropriate.
 

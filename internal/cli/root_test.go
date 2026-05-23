@@ -3019,6 +3019,219 @@ preferences:
 	assertContains(t, stdout, `"version": "0.1.0-test"`)
 }
 
+func TestOutputModePreferencesUseConfigEnvironmentAndFlags(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	configText := `version: 1
+profiles: []
+preferences:
+  json: always
+  automation: never
+`
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte(configText), 0o600); err != nil {
+		t.Fatalf("expected to write profile config fixture: %v", err)
+	}
+
+	stdout, stderr, err := executeCommand("version")
+	if err != nil {
+		t.Fatalf("expected persisted JSON preference to apply: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"command": "authnet version"`)
+	assertContains(t, stdout, `"version": "0.1.0-test"`)
+	assertNotContains(t, stdout, "\x1b[")
+	if stderr != "" {
+		t.Fatalf("expected stderr to stay empty, got %q", stderr)
+	}
+
+	t.Setenv("AUTHNET_JSON", "false")
+	stdout, stderr, err = executeCommand("version")
+	if err != nil {
+		t.Fatalf("expected environment JSON override to apply: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, "authnet 0.1.0-test")
+	assertNotContains(t, stdout, `"command": "authnet version"`)
+
+	stdout, stderr, err = executeCommand("--json", "version")
+	if err != nil {
+		t.Fatalf("expected --json to override environment false: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"command": "authnet version"`)
+
+	t.Setenv("AUTHNET_JSON", "")
+	t.Setenv("AUTHNET_AUTOMATION", "true")
+	stdout, stderr, err = executeCommand("version")
+	if err != nil {
+		t.Fatalf("expected environment automation override to apply: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"command": "authnet version"`)
+	assertNotContains(t, stdout, "\x1b[")
+}
+
+func TestOutputModePreferenceConflictWarnsAndAutomationWins(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	configText := `version: 1
+profiles: []
+preferences:
+  json: always
+  automation: always
+`
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte(configText), 0o600); err != nil {
+		t.Fatalf("expected to write profile config fixture: %v", err)
+	}
+
+	stdout, stderr, err := executeCommand("version")
+	if err != nil {
+		t.Fatalf("expected conflicting output preferences to warn but succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, `"command": "authnet version"`)
+	assertContains(t, stdout, `"code": "output_mode_preference_conflict"`)
+	assertContains(t, stdout, "preferences.json and preferences.automation are both always")
+	if stderr != "" {
+		t.Fatalf("expected JSON preference warning on stdout only, got stderr %q", stderr)
+	}
+
+	t.Setenv("AUTHNET_JSON", "false")
+	t.Setenv("AUTHNET_AUTOMATION", "false")
+	stdout, stderr, err = executeCommand("version")
+	if err != nil {
+		t.Fatalf("expected env overrides to produce human output with conflict warning: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stdout, "authnet 0.1.0-test")
+	assertNotContains(t, stdout, `"command": "authnet version"`)
+	assertContains(t, stderr, "warning: preferences.json and preferences.automation are both always")
+}
+
+func TestConfigValidateChecksOutputModePreferences(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	configText := `version: 1
+profiles: []
+preferences:
+  json: sometimes
+  automation: sideways
+`
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte(configText), 0o600); err != nil {
+		t.Fatalf("expected to write profile config fixture: %v", err)
+	}
+
+	stdout, stderr, code, err := executeCommandWithExit("--json", "config", "validate")
+	if err == nil {
+		t.Fatal("expected config validate to fail for invalid output mode preferences")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected config validate usage exit, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `invalid preference json \"sometimes\": expected always or never`)
+	assertContains(t, stdout, `invalid preference automation \"sideways\": expected always or never`)
+}
+
+func TestInvalidOutputModePreferencesFailFastForNormalCommands(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	configText := `version: 1
+profiles: []
+preferences:
+  json: sometimes
+  automation: never
+`
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte(configText), 0o600); err != nil {
+		t.Fatalf("expected to write profile config fixture: %v", err)
+	}
+
+	stdout, stderr, code, err := executeCommandWithExit("--json", "version")
+	if err == nil {
+		t.Fatal("expected invalid JSON preference to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `invalid preferences.json value \"sometimes\"`)
+}
+
+func TestInvalidOutputModeEnvironmentOverridesFailFast(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv("AUTHNET_AUTOMATION", "sideways")
+
+	stdout, stderr, code, err := executeCommandWithExit("--json", "version")
+	if err == nil {
+		t.Fatal("expected invalid automation environment override to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `invalid AUTHNET_AUTOMATION value \"sideways\": expected true or false`)
+}
+
+func TestRawResponseWarningsFollowOutputContracts(t *testing.T) {
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newAuthTestServer(t, http.StatusOK, `{"messages":{"resultCode":"Ok","message":[{"code":"I00001","text":"secret-login was accepted."}]}}`)
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	t.Run("bare raw response warns on stderr and preserves stdout", func(t *testing.T) {
+		configDir := t.TempDir()
+		t.Setenv(configEnvName, configDir)
+		configText := `version: 1
+default_profile: sandbox-main
+profiles:
+  - name: sandbox-main
+    environment: sandbox
+    credential_source:
+      type: env
+      api_login_id_env: AUTHNET_API_LOGIN_ID
+      transaction_key_env: AUTHNET_TRANSACTION_KEY
+preferences:
+  json: never
+  automation: never
+`
+		if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte(configText), 0o600); err != nil {
+			t.Fatalf("expected to write profile config fixture: %v", err)
+		}
+
+		stdout, stderr, err := executeCommand("--raw-response", "auth", "test")
+		if err != nil {
+			t.Fatalf("expected raw response to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+		}
+		assertContains(t, stdout, `"messages":{"resultCode":"Ok"`)
+		assertNotContains(t, stdout, `"warnings"`)
+		assertContains(t, stderr, "warning: preferences.json and preferences.automation are set to never in config.yaml but ignored")
+	})
+
+	t.Run("json-preferred raw response uses envelope warning", func(t *testing.T) {
+		configDir := t.TempDir()
+		t.Setenv(configEnvName, configDir)
+		configText := `version: 1
+default_profile: sandbox-main
+profiles:
+  - name: sandbox-main
+    environment: sandbox
+    credential_source:
+      type: env
+      api_login_id_env: AUTHNET_API_LOGIN_ID
+      transaction_key_env: AUTHNET_TRANSACTION_KEY
+preferences:
+  json: always
+  automation: never
+`
+		if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte(configText), 0o600); err != nil {
+			t.Fatalf("expected to write profile config fixture: %v", err)
+		}
+
+		stdout, stderr, err := executeCommand("--raw-response", "auth", "test")
+		if err != nil {
+			t.Fatalf("expected raw response to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+		}
+		assertContains(t, stdout, `"redacted": false`)
+		assertContains(t, stdout, `"raw_gateway_response": {`)
+		assertContains(t, stdout, `"code": "raw_response_preference_ignored"`)
+		assertContains(t, stdout, "preferences.automation is set to never")
+		if stderr != "" {
+			t.Fatalf("expected JSON raw-response warning on stdout only, got stderr %q", stderr)
+		}
+	})
+}
+
 func TestProfileSetupListValidateAndRemove(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv(configEnvName, configDir)
