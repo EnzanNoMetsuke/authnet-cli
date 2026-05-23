@@ -199,3 +199,7 @@ make test-sandbox-integration
 ```
 
 Contributor expectations are documented in [CONTRIBUTING.md](CONTRIBUTING.md). Agent and automation usage is documented in [docs/agent-usage.md](docs/agent-usage.md). Sandbox integration CI is documented in [docs/sandbox-integration-ci.md](docs/sandbox-integration-ci.md). Release workflow details are documented in [docs/release.md](docs/release.md). Response-code reference maintenance is documented in [docs/response-code-reference.md](docs/response-code-reference.md).
+
+## License
+
+`authnet-cli` is released under the MIT License. See [LICENSE](LICENSE) for the full license text and trademark exception.

@@ -2,6 +2,7 @@
 set -eu
 
 required_files="
+LICENSE
 README.md
 CONTRIBUTING.md
 docs/safety-model.md
@@ -18,6 +19,7 @@ for file in $required_files; do
 done
 
 required_links="
+LICENSE
 docs/project-spec.md
 docs/safety-model.md
 docs/agent-usage.md

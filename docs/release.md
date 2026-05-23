@@ -38,7 +38,7 @@ The release workflow builds `authnet` for:
 
 Each release includes:
 
-- Platform archives containing the `authnet` binary and core project docs
+- Platform archives containing the `authnet` binary, [LICENSE](../LICENSE), and core project docs
 - `checksums.txt`
 - GitHub release notes generated from commit history
 
