@@ -4,8 +4,33 @@ name = "authnet-cli"
 
 [setup]
 script = '''
+set -euo pipefail
+
 cd "$CODEX_WORKTREE_PATH"
-mkdir -p .cache/go-build .cache/go-mod .cache/golangci-lint bin
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
+
+mkdir -p \
+  "$REPO_ROOT/.cache/go-build" \
+  "$REPO_ROOT/.cache/go-mod" \
+  "$REPO_ROOT/.cache/go-tmp" \
+  "$REPO_ROOT/.cache/golangci-lint" \
+  "$REPO_ROOT/.cache/config" \
+  "$REPO_ROOT/bin"
+
+cat >> "$HOME/.bashrc" <<EOF
+
+export GOCACHE="$REPO_ROOT/.cache/go-build"
+export GOMODCACHE="$REPO_ROOT/.cache/go-mod"
+export GOTMPDIR="$REPO_ROOT/.cache/go-tmp"
+export XDG_CACHE_HOME="$REPO_ROOT/.cache"
+export GOLANGCI_LINT_CACHE="$REPO_ROOT/.cache/golangci-lint"
+export AUTHNET_CONFIG_DIR="$REPO_ROOT/.cache/config"
+export GOBIN="$REPO_ROOT/bin"
+export PATH="$GOBIN:$PATH"
+EOF
+
+go env GOCACHE GOMODCACHE GOTMPDIR GOBIN
 go mod download
 make golangci-lint-install
 make install-git-hooks
