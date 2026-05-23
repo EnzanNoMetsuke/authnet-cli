@@ -41,8 +41,12 @@ archives:
     files:
       - LICENSE
       - README.md
-      - docs/project-spec.md
+      - TRADEMARK.md
+      - CONTRIBUTING.md
       - docs/safety-model.md
+      - docs/response-code-reference.md
+      - docs/agent-usage.md
+      - docs/assets/authnet-cli-readme-banner.webp
 
 checksum:
   name_template: checksums.txt
