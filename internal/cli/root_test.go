@@ -1737,7 +1737,7 @@ func TestTransactionListFilterFlagsUseAndSemantics(t *testing.T) {
 		{
 			Want: `"getTransactionListRequest"`,
 			AlsoWant: []string{
-				`"offset":5`,
+				`"offset":2`,
 			},
 			Body: `{
 				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
@@ -1873,7 +1873,7 @@ func TestTransactionListFilterFetchesAdditionalSettledPages(t *testing.T) {
 			Want: `"getTransactionListRequest"`,
 			AlsoWant: []string{
 				`"limit":2`,
-				`"offset":3`,
+				`"offset":2`,
 			},
 			Body: `{
 				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
@@ -1922,7 +1922,7 @@ func TestTransactionUnsettledListFilterFetchesAdditionalPages(t *testing.T) {
 			Want: `"getUnsettledTransactionListRequest"`,
 			AlsoWant: []string{
 				`"limit":2`,
-				`"offset":3`,
+				`"offset":2`,
 			},
 			Body: `{
 				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},

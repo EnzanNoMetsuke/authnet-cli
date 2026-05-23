@@ -1144,7 +1144,7 @@ func runTransactionList(cmd *cobra.Command, listOptions *transactionListOptions)
 	hasMoreCandidates := false
 	for _, batch := range batches.BatchList {
 		pageLimit := limit
-		for offset := 1; ; offset += pageLimit {
+		for offset := 1; ; offset++ {
 			response, err := client.getTransactionList(cmd.Context(), profile.Credentials, batch.BatchID.String(), gatewayPaging{
 				Limit:  pageLimit,
 				Offset: offset,
@@ -1216,7 +1216,7 @@ func runTransactionUnsettledList(cmd *cobra.Command, listOptions *transactionUns
 		candidateLimit = limit
 	}
 	hasMoreCandidates := false
-	for offset := 1; ; offset += candidateLimit {
+	for offset := 1; ; offset++ {
 		response, err := client.getUnsettledTransactionList(cmd.Context(), profile.Credentials, gatewayPaging{
 			Limit:  candidateLimit,
 			Offset: offset,
