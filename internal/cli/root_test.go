@@ -584,6 +584,61 @@ func TestIncompleteCommandGroupsShowHelpAndReturnUsageExitCode(t *testing.T) {
 	}
 }
 
+func TestCommandGroupHelpMarksRequiredSubcommand(t *testing.T) {
+	stdout, stderr, code, err := executeCommandWithExit("transaction")
+	if err == nil {
+		t.Fatal("expected incomplete command group to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d", code)
+	}
+	if stderr != "" {
+		t.Fatalf("expected stderr to stay empty, got %q", stderr)
+	}
+	assertContains(t, stdout, "Usage:\n  authnet transaction <command> [flags]")
+	assertContains(t, stdout, `Use "authnet transaction <command> --help" for more information about a command.`)
+	assertNotContains(t, stdout, "authnet transaction [command]")
+}
+
+func TestCommandHelpMarksRequiredArguments(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "transaction id",
+			args: []string{"transaction", "get", "--help"},
+			want: "Usage:\n  authnet transaction get <TRANSACTION_ID> [flags]",
+		},
+		{
+			name: "customer profile id",
+			args: []string{"customer-profile", "get", "--help"},
+			want: "Usage:\n  authnet customer-profile get <CUSTOMER_PROFILE_ID> [flags]",
+		},
+		{
+			name: "response code",
+			args: []string{"response-code", "explain", "--help"},
+			want: "Usage:\n  authnet response-code explain <CODE> [flags]",
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			stdout, stderr, code, err := executeCommandWithExit(tt.args...)
+			if err != nil {
+				t.Fatalf("expected help to succeed: %v", err)
+			}
+			if code != exitSuccess {
+				t.Fatalf("expected help success exit code, got %d", code)
+			}
+			if stderr != "" {
+				t.Fatalf("expected stderr to stay empty, got %q", stderr)
+			}
+			assertContains(t, stdout, tt.want)
+		})
+	}
+}
+
 func TestIncompleteCommandGroupsReturnStructuredJSONUsageFailure(t *testing.T) {
 	stdout, stderr, code, err := executeCommandWithExit("--json", "transaction")
 	if err == nil {

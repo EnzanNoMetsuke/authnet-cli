@@ -48,9 +48,10 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       build.Version,
-		RunE:          requireSubcommand,
 	}
+	requireSubcommandFor(root)
 	root.SetContext(ctx)
+	root.SetUsageFunc(writeUsage)
 	root.CompletionOptions.DisableDefaultCmd = true
 
 	root.SetVersionTemplate("authnet {{.Version}}\n")
@@ -85,6 +86,16 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 	root.AddCommand(newCompletionCommand(root))
 
 	return root
+}
+
+const requiresSubcommandAnnotation = "authnet.requires_subcommand"
+
+func requireSubcommandFor(cmd *cobra.Command) {
+	cmd.RunE = requireSubcommand
+	if cmd.Annotations == nil {
+		cmd.Annotations = map[string]string{}
+	}
+	cmd.Annotations[requiresSubcommandAnnotation] = "true"
 }
 
 func requireSubcommand(cmd *cobra.Command, _ []string) error {

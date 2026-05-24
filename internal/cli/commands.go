@@ -95,8 +95,8 @@ func newConfigCommand() *cobra.Command {
 	config := &cobra.Command{
 		Use:   "config",
 		Short: "Manage local non-secret profile config",
-		RunE:  requireSubcommand,
 	}
+	requireSubcommandFor(config)
 	config.AddCommand(&cobra.Command{
 		Use:   "migrate",
 		Short: "Migrate legacy profile config to config.yaml",
@@ -389,8 +389,8 @@ func newAuthCommand() *cobra.Command {
 	auth := &cobra.Command{
 		Use:   "auth",
 		Short: "Test Authorize.Net profile authentication",
-		RunE:  requireSubcommand,
 	}
+	requireSubcommandFor(auth)
 	auth.AddCommand(&cobra.Command{
 		Use:         "test",
 		Short:       "Test selected profile authentication",
@@ -404,8 +404,8 @@ func newProfileCommand() *cobra.Command {
 	profile := &cobra.Command{
 		Use:   "profile",
 		Short: "Manage local profiles",
-		RunE:  requireSubcommand,
 	}
+	requireSubcommandFor(profile)
 
 	list := &cobra.Command{
 		Use:   "list",
@@ -476,10 +476,10 @@ func newTransactionCommand() *cobra.Command {
 	transaction := &cobra.Command{
 		Use:   "transaction",
 		Short: "Inspect Authorize.Net transactions",
-		RunE:  requireSubcommand,
 	}
+	requireSubcommandFor(transaction)
 	transaction.AddCommand(&cobra.Command{
-		Use:         "get TRANSACTION_ID",
+		Use:         "get <TRANSACTION_ID>",
 		Short:       "Inspect one transaction",
 		Args:        cobra.ExactArgs(1),
 		Annotations: map[string]string{rawResponseSupportAnnotation: "supported"},
@@ -510,8 +510,8 @@ func newTransactionCommand() *cobra.Command {
 	unsettled := &cobra.Command{
 		Use:   "unsettled",
 		Short: "Inspect unsettled transaction set",
-		RunE:  requireSubcommand,
 	}
+	requireSubcommandFor(unsettled)
 	unsettledOptions := &transactionUnsettledListOptions{
 		Limit: defaultTransactionListLimit,
 	}
@@ -539,11 +539,11 @@ func newCustomerProfileCommand() *cobra.Command {
 	customerProfile := &cobra.Command{
 		Use:   "customer-profile",
 		Short: "Inspect Authorize.Net customer profiles",
-		RunE:  requireSubcommand,
 	}
+	requireSubcommandFor(customerProfile)
 	getOptions := &customerProfileGetOptions{}
 	get := &cobra.Command{
-		Use:   "get CUSTOMER_PROFILE_ID",
+		Use:   "get <CUSTOMER_PROFILE_ID>",
 		Short: "Inspect one customer profile",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -565,11 +565,11 @@ func newResponseCodeCommand() *cobra.Command {
 	responseCode := &cobra.Command{
 		Use:   "response-code",
 		Short: "Explain Authorize.Net response codes",
-		RunE:  requireSubcommand,
 	}
+	requireSubcommandFor(responseCode)
 	explainOptions := &responseCodeExplainOptions{}
 	explain := &cobra.Command{
-		Use:   "explain CODE",
+		Use:   "explain <CODE>",
 		Short: "Explain a gateway or API response code",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -659,13 +659,13 @@ func newSandboxCommand() *cobra.Command {
 	sandbox := &cobra.Command{
 		Use:   "sandbox",
 		Short: "Run sandbox-only test helpers",
-		RunE:  requireSubcommand,
 	}
+	requireSubcommandFor(sandbox)
 	charge := &cobra.Command{
 		Use:   "charge",
 		Short: "Run sandbox card charge scenarios",
-		RunE:  requireSubcommand,
 	}
+	requireSubcommandFor(charge)
 	for _, scenario := range []string{"approved", "declined", "avs", "cvv", "duplicate"} {
 		options := sandboxChargeOptions{
 			Card:   defaultSandboxCardAlias,

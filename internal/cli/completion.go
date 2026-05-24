@@ -13,8 +13,8 @@ func newCompletionCommand(root *cobra.Command) *cobra.Command {
 	completion := &cobra.Command{
 		Use:   "completion",
 		Short: "Generate static shell completion scripts",
-		RunE:  requireSubcommand,
 	}
+	requireSubcommandFor(completion)
 
 	completion.AddCommand(&cobra.Command{
 		Use:   "bash",
