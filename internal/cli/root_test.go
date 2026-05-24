@@ -639,6 +639,69 @@ func TestCommandHelpMarksRequiredArguments(t *testing.T) {
 	}
 }
 
+func TestMissingRequiredArgumentsShowCommandUsage(t *testing.T) {
+	cases := []struct {
+		name        string
+		args        []string
+		wantError   string
+		wantUsage   string
+		notExpected string
+	}{
+		{
+			name:        "transaction id",
+			args:        []string{"transaction", "get"},
+			wantError:   "transaction get requires <TRANSACTION_ID>",
+			wantUsage:   "Usage:\n  authnet transaction get <TRANSACTION_ID> [flags]",
+			notExpected: "accepts 1 arg(s), received 0",
+		},
+		{
+			name:        "customer profile id",
+			args:        []string{"customer-profile", "get"},
+			wantError:   "customer-profile get requires <CUSTOMER_PROFILE_ID>",
+			wantUsage:   "Usage:\n  authnet customer-profile get <CUSTOMER_PROFILE_ID> [flags]",
+			notExpected: "accepts 1 arg(s), received 0",
+		},
+		{
+			name:        "response code",
+			args:        []string{"response-code", "explain"},
+			wantError:   "response-code explain requires <CODE>",
+			wantUsage:   "Usage:\n  authnet response-code explain <CODE> [flags]",
+			notExpected: "accepts 1 arg(s), received 0",
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			stdout, stderr, code, err := executeCommandWithExit(tt.args...)
+			if err == nil {
+				t.Fatalf("expected %v to fail", tt.args)
+			}
+			if code != exitUsageOrConfig {
+				t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+			}
+			assertContains(t, stderr, tt.wantError)
+			assertContains(t, stdout, tt.wantUsage)
+			assertNotContains(t, stdout+stderr, tt.notExpected)
+		})
+	}
+}
+
+func TestMissingRequiredArgumentsReturnStructuredJSONUsageFailure(t *testing.T) {
+	stdout, stderr, code, err := executeCommandWithExit("--json", "transaction", "get")
+	if err == nil {
+		t.Fatal("expected missing JSON argument to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d", code)
+	}
+	if stderr != "" {
+		t.Fatalf("expected JSON failure stderr to stay empty, got %q", stderr)
+	}
+	assertContains(t, stdout, `"command": "authnet transaction get"`)
+	assertContains(t, stdout, `"code": "usage_or_config_error"`)
+	assertContains(t, stdout, `"message": "transaction get requires <TRANSACTION_ID>"`)
+	assertNotContains(t, stdout, "Usage:")
+}
+
 func TestIncompleteCommandGroupsReturnStructuredJSONUsageFailure(t *testing.T) {
 	stdout, stderr, code, err := executeCommandWithExit("--json", "transaction")
 	if err == nil {

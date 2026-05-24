@@ -481,7 +481,7 @@ func newTransactionCommand() *cobra.Command {
 	transaction.AddCommand(&cobra.Command{
 		Use:         "get <TRANSACTION_ID>",
 		Short:       "Inspect one transaction",
-		Args:        cobra.ExactArgs(1),
+		Args:        requireExactArgs(1, "<TRANSACTION_ID>"),
 		Annotations: map[string]string{rawResponseSupportAnnotation: "supported"},
 		RunE:        runTransactionGet,
 	})
@@ -545,7 +545,7 @@ func newCustomerProfileCommand() *cobra.Command {
 	get := &cobra.Command{
 		Use:   "get <CUSTOMER_PROFILE_ID>",
 		Short: "Inspect one customer profile",
-		Args:  cobra.ExactArgs(1),
+		Args:  requireExactArgs(1, "<CUSTOMER_PROFILE_ID>"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCustomerProfileGet(cmd, args, getOptions)
 		},
@@ -571,7 +571,7 @@ func newResponseCodeCommand() *cobra.Command {
 	explain := &cobra.Command{
 		Use:   "explain <CODE>",
 		Short: "Explain a gateway or API response code",
-		Args:  cobra.ExactArgs(1),
+		Args:  requireExactArgs(1, "<CODE>"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runResponseCodeExplain(cmd, args, explainOptions)
 		},

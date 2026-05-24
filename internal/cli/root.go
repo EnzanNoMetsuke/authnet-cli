@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -107,6 +108,36 @@ func requireSubcommand(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	return renderedError{exitCode: exitUsageOrConfig, message: message}
+}
+
+func requireExactArgs(count int, placeholders ...string) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) == count {
+			return nil
+		}
+		message := missingArgumentMessage(cmd, count, placeholders)
+		if optionsFromCommand(cmd).JSON {
+			return newUsageError("%s", message)
+		}
+		if _, err := fmt.Fprintln(cmd.ErrOrStderr(), message); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(cmd.ErrOrStderr()); err != nil {
+			return err
+		}
+		if err := cmd.Usage(); err != nil {
+			return err
+		}
+		return renderedError{exitCode: exitUsageOrConfig, message: message}
+	}
+}
+
+func missingArgumentMessage(cmd *cobra.Command, count int, placeholders []string) string {
+	commandPath := strings.TrimPrefix(cmd.CommandPath(), "authnet ")
+	if len(placeholders) == 0 {
+		return fmt.Sprintf("%s requires %d argument(s)", commandPath, count)
+	}
+	return fmt.Sprintf("%s requires %s", commandPath, strings.Join(placeholders, " "))
 }
 
 // Execute runs the root command and returns the mapped process exit code.
