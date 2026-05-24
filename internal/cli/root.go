@@ -48,6 +48,7 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       build.Version,
+		RunE:          requireSubcommand,
 	}
 	root.SetContext(ctx)
 	root.CompletionOptions.DisableDefaultCmd = true
@@ -84,6 +85,17 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 	root.AddCommand(newCompletionCommand(root))
 
 	return root
+}
+
+func requireSubcommand(cmd *cobra.Command, _ []string) error {
+	message := cmd.CommandPath() + " requires a subcommand"
+	if optionsFromCommand(cmd).JSON {
+		return newUsageError("%s", message)
+	}
+	if err := cmd.Help(); err != nil {
+		return err
+	}
+	return renderedError{exitCode: exitUsageOrConfig, message: message}
 }
 
 // Execute runs the root command and returns the mapped process exit code.

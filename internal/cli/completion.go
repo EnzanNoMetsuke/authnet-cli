@@ -13,6 +13,7 @@ func newCompletionCommand(root *cobra.Command) *cobra.Command {
 	completion := &cobra.Command{
 		Use:   "completion",
 		Short: "Generate static shell completion scripts",
+		RunE:  requireSubcommand,
 	}
 
 	completion.AddCommand(&cobra.Command{
@@ -47,10 +48,6 @@ func newCompletionCommand(root *cobra.Command) *cobra.Command {
 			return err
 		},
 	})
-
-	completion.RunE = func(_ *cobra.Command, _ []string) error {
-		return fmt.Errorf("specify a shell: bash, zsh, fish, or powershell")
-	}
 
 	return completion
 }

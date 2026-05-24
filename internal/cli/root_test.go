@@ -479,17 +479,17 @@ func TestNoColorOverridesInvalidColorPreference(t *testing.T) {
 
 func TestNoColorDoesNotHideInvalidExplicitColorFlag(t *testing.T) {
 	_, stderr, code, err := executeCommandWithExit("--color=purple", "--no-color", "version")
-	if err != nil {
-		t.Fatalf("expected human invalid explicit color to be shell-safe: %v", err)
+	if err == nil {
+		t.Fatal("expected human invalid explicit color to fail")
 	}
-	if code != exitSuccess {
-		t.Fatalf("expected shell-safe success exit code, got %d", code)
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d", code)
 	}
 	assertContains(t, stderr, `invalid --color value "purple"`)
 }
 
-func TestSandboxHelpShowsChargeCommands(t *testing.T) {
-	stdout, stderr, code, err := executeCommandWithExit("sandbox")
+func TestExplicitHelpShowsCommandHelpSuccessfully(t *testing.T) {
+	stdout, stderr, code, err := executeCommandWithExit("sandbox", "--help")
 	if err != nil {
 		t.Fatalf("expected sandbox help to succeed: %v", err)
 	}
@@ -501,6 +501,104 @@ func TestSandboxHelpShowsChargeCommands(t *testing.T) {
 	}
 	assertContains(t, stdout, "charge")
 	assertContains(t, stdout, "Run sandbox-only test helpers")
+}
+
+func TestIncompleteCommandGroupsShowHelpAndReturnUsageExitCode(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "root",
+			args: []string{},
+			want: "Authorize.Net operations CLI",
+		},
+		{
+			name: "config group",
+			args: []string{"config"},
+			want: "Manage local non-secret profile config",
+		},
+		{
+			name: "auth group",
+			args: []string{"auth"},
+			want: "Test Authorize.Net profile authentication",
+		},
+		{
+			name: "profile group",
+			args: []string{"profile"},
+			want: "Manage local profiles",
+		},
+		{
+			name: "transaction group",
+			args: []string{"transaction"},
+			want: "Inspect Authorize.Net transactions",
+		},
+		{
+			name: "transaction unsettled group",
+			args: []string{"transaction", "unsettled"},
+			want: "Inspect unsettled transaction set",
+		},
+		{
+			name: "customer profile group",
+			args: []string{"customer-profile"},
+			want: "Inspect Authorize.Net customer profiles",
+		},
+		{
+			name: "response code group",
+			args: []string{"response-code"},
+			want: "Explain Authorize.Net response codes",
+		},
+		{
+			name: "sandbox group",
+			args: []string{"sandbox"},
+			want: "Run sandbox-only test helpers",
+		},
+		{
+			name: "sandbox scenario group",
+			args: []string{"sandbox", "charge"},
+			want: "Run sandbox card charge scenarios",
+		},
+		{
+			name: "completion group",
+			args: []string{"completion"},
+			want: "Generate static shell completion scripts",
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			stdout, stderr, code, err := executeCommandWithExit(tt.args...)
+			if err == nil {
+				t.Fatalf("expected %v to fail", tt.args)
+			}
+			if code != exitUsageOrConfig {
+				t.Fatalf("expected %v to exit %d, got %d\nstdout:\n%s\nstderr:\n%s", tt.args, exitUsageOrConfig, code, stdout, stderr)
+			}
+			if stderr != "" {
+				t.Fatalf("expected incomplete command group stderr to stay empty, got %q", stderr)
+			}
+			assertContains(t, stdout, tt.want)
+			assertContains(t, stdout, "Usage:")
+			assertContains(t, stdout, "Available Commands:")
+		})
+	}
+}
+
+func TestIncompleteCommandGroupsReturnStructuredJSONUsageFailure(t *testing.T) {
+	stdout, stderr, code, err := executeCommandWithExit("--json", "transaction")
+	if err == nil {
+		t.Fatal("expected incomplete JSON command group to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d", code)
+	}
+	if stderr != "" {
+		t.Fatalf("expected JSON failure stderr to stay empty, got %q", stderr)
+	}
+	assertContains(t, stdout, `"command": "authnet transaction"`)
+	assertContains(t, stdout, `"code": "usage_or_config_error"`)
+	assertContains(t, stdout, `"message": "authnet transaction requires a subcommand"`)
+	assertNotContains(t, stdout, "Available Commands:")
 }
 
 func TestHumanFailuresReturnTaxonomyExitCodes(t *testing.T) {
@@ -1203,11 +1301,11 @@ func TestAuthTestRedactsCredentialEchoesInHumanFailureOutput(t *testing.T) {
 		t.Fatalf("expected profile setup to succeed: %v", err)
 	}
 	stdout, stderr, code, err := executeCommandWithExit("--profile", "prod-fake", "auth", "test")
-	if err != nil {
-		t.Fatalf("expected human auth failure to be shell-safe: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	if err == nil {
+		t.Fatal("expected human auth failure to fail")
 	}
-	if code != exitSuccess {
-		t.Fatalf("expected human auth failure to return shell-safe success, got %d", code)
+	if code != exitAuthFailure {
+		t.Fatalf("expected auth failure exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
 	assertContains(t, stdout, redactedValue)
 	assertNotContains(t, stdout, "SECRETKEY1234567")

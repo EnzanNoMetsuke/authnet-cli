@@ -95,6 +95,7 @@ func newConfigCommand() *cobra.Command {
 	config := &cobra.Command{
 		Use:   "config",
 		Short: "Manage local non-secret profile config",
+		RunE:  requireSubcommand,
 	}
 	config.AddCommand(&cobra.Command{
 		Use:   "migrate",
@@ -388,6 +389,7 @@ func newAuthCommand() *cobra.Command {
 	auth := &cobra.Command{
 		Use:   "auth",
 		Short: "Test Authorize.Net profile authentication",
+		RunE:  requireSubcommand,
 	}
 	auth.AddCommand(&cobra.Command{
 		Use:         "test",
@@ -402,6 +404,7 @@ func newProfileCommand() *cobra.Command {
 	profile := &cobra.Command{
 		Use:   "profile",
 		Short: "Manage local profiles",
+		RunE:  requireSubcommand,
 	}
 
 	list := &cobra.Command{
@@ -473,6 +476,7 @@ func newTransactionCommand() *cobra.Command {
 	transaction := &cobra.Command{
 		Use:   "transaction",
 		Short: "Inspect Authorize.Net transactions",
+		RunE:  requireSubcommand,
 	}
 	transaction.AddCommand(&cobra.Command{
 		Use:         "get TRANSACTION_ID",
@@ -506,6 +510,7 @@ func newTransactionCommand() *cobra.Command {
 	unsettled := &cobra.Command{
 		Use:   "unsettled",
 		Short: "Inspect unsettled transaction set",
+		RunE:  requireSubcommand,
 	}
 	unsettledOptions := &transactionUnsettledListOptions{
 		Limit: defaultTransactionListLimit,
@@ -534,6 +539,7 @@ func newCustomerProfileCommand() *cobra.Command {
 	customerProfile := &cobra.Command{
 		Use:   "customer-profile",
 		Short: "Inspect Authorize.Net customer profiles",
+		RunE:  requireSubcommand,
 	}
 	getOptions := &customerProfileGetOptions{}
 	get := &cobra.Command{
@@ -559,6 +565,7 @@ func newResponseCodeCommand() *cobra.Command {
 	responseCode := &cobra.Command{
 		Use:   "response-code",
 		Short: "Explain Authorize.Net response codes",
+		RunE:  requireSubcommand,
 	}
 	explainOptions := &responseCodeExplainOptions{}
 	explain := &cobra.Command{
@@ -652,10 +659,12 @@ func newSandboxCommand() *cobra.Command {
 	sandbox := &cobra.Command{
 		Use:   "sandbox",
 		Short: "Run sandbox-only test helpers",
+		RunE:  requireSubcommand,
 	}
 	charge := &cobra.Command{
 		Use:   "charge",
 		Short: "Run sandbox card charge scenarios",
+		RunE:  requireSubcommand,
 	}
 	for _, scenario := range []string{"approved", "declined", "avs", "cvv", "duplicate"} {
 		options := sandboxChargeOptions{
