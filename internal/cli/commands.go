@@ -152,9 +152,6 @@ func newConfigCommand() *cobra.Command {
 				return renderErr
 			}
 			if !result.Valid {
-				if !optionsFromCommand(cmd).JSON {
-					return nil
-				}
 				return renderedError{exitCode: exitUsageOrConfig, message: "profile config validation failed"}
 			}
 			return nil

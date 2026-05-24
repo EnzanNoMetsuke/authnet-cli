@@ -292,11 +292,11 @@ func TestCompletionCommandIsStatic(t *testing.T) {
 
 func TestGlobalColorValidation(t *testing.T) {
 	_, stderr, code, err := executeCommandWithExit("--color=purple", "version")
-	if err != nil {
-		t.Fatalf("expected human invalid color to be shell-safe: %v", err)
+	if err == nil {
+		t.Fatal("expected human invalid color to fail")
 	}
-	if code != exitSuccess {
-		t.Fatalf("expected shell-safe success exit code, got %d", code)
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d", code)
 	}
 	assertContains(t, stderr, "invalid --color value")
 }
@@ -491,10 +491,10 @@ func TestNoColorDoesNotHideInvalidExplicitColorFlag(t *testing.T) {
 func TestSandboxHelpShowsChargeCommands(t *testing.T) {
 	stdout, stderr, code, err := executeCommandWithExit("sandbox")
 	if err != nil {
-		t.Fatalf("expected sandbox help to be shell-safe: %v", err)
+		t.Fatalf("expected sandbox help to succeed: %v", err)
 	}
 	if code != exitSuccess {
-		t.Fatalf("expected shell-safe success exit code, got %d", code)
+		t.Fatalf("expected help-only success exit code, got %d", code)
 	}
 	if stderr != "" {
 		t.Fatalf("expected sandbox help stderr to stay empty, got %q", stderr)
@@ -503,24 +503,41 @@ func TestSandboxHelpShowsChargeCommands(t *testing.T) {
 	assertContains(t, stdout, "Run sandbox-only test helpers")
 }
 
-func TestHumanFailuresAreShellSafe(t *testing.T) {
-	cases := [][]string{
-		{"--color=purple", "version"},
-		{"sandbox"},
-		{"profile", "remove", "--name", "missing"},
-		{"transaction", "list", "--limit", "101"},
+func TestHumanFailuresReturnTaxonomyExitCodes(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want ExitCode
+	}{
+		{
+			name: "invalid global option",
+			args: []string{"--color=purple", "version"},
+			want: exitUsageOrConfig,
+		},
+		{
+			name: "command validation",
+			args: []string{"transaction", "list", "--limit", "101"},
+			want: exitUsageOrConfig,
+		},
+		{
+			name: "local missing resource",
+			args: []string{"response-code", "explain", "ZZZ"},
+			want: exitNotFound,
+		},
 	}
-	for _, args := range cases {
-		stdout, stderr, code, err := executeCommandWithExit(args...)
-		if err != nil {
-			t.Fatalf("expected %v to be shell-safe: %v\nstdout:\n%s\nstderr:\n%s", args, err, stdout, stderr)
-		}
-		if code != exitSuccess {
-			t.Fatalf("expected %v to exit successfully in human mode, got %d\nstdout:\n%s\nstderr:\n%s", args, code, stdout, stderr)
-		}
-		if strings.TrimSpace(stdout) == "" && strings.TrimSpace(stderr) == "" {
-			t.Fatalf("expected %v to render an error or report", args)
-		}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			stdout, stderr, code, err := executeCommandWithExit(tt.args...)
+			if err == nil {
+				t.Fatalf("expected %v to fail", tt.args)
+			}
+			if code != tt.want {
+				t.Fatalf("expected %v to exit %d, got %d\nstdout:\n%s\nstderr:\n%s", tt.args, tt.want, code, stdout, stderr)
+			}
+			if strings.TrimSpace(stdout) == "" && strings.TrimSpace(stderr) == "" {
+				t.Fatalf("expected %v to render an error or report", tt.args)
+			}
+		})
 	}
 }
 
@@ -636,11 +653,11 @@ func TestResponseCodeExplainMissingCodeIncludesMetadata(t *testing.T) {
 
 func TestResponseCodeExplainAmbiguousHumanOutputUsesTable(t *testing.T) {
 	stdout, stderr, code, err := executeCommandWithExit("response-code", "explain", "N")
-	if err != nil {
-		t.Fatalf("expected human ambiguous response code to render without shell failure: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	if err == nil {
+		t.Fatal("expected ambiguous response code to fail")
 	}
-	if code != exitSuccess {
-		t.Fatalf("expected human ambiguous response code to return success, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
 	assertContains(t, stdout, "response code N is ambiguous")
 	assertContains(t, stdout, "Family")
@@ -4028,7 +4045,7 @@ func TestConfigValidateTreatsWhitespaceOnlyCredentialSourcesAsMissing(t *testing
 	assertContains(t, stdout, "BLANK_LOGIN, BLANK_KEY")
 }
 
-func TestConfigValidateHumanInvalidDoesNotFailShell(t *testing.T) {
+func TestConfigValidateHumanInvalidReturnsUsageConfigExitCode(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 
 	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--api-login-id-env", "MISSING_LOGIN", "--transaction-key-env", "MISSING_KEY")
@@ -4036,11 +4053,11 @@ func TestConfigValidateHumanInvalidDoesNotFailShell(t *testing.T) {
 		t.Fatalf("expected setup with credential references to succeed: %v", err)
 	}
 	stdout, stderr, code, err := executeCommandWithExit("config", "validate")
-	if err != nil {
-		t.Fatalf("expected human config validate to report invalid config without failing the shell: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	if err == nil {
+		t.Fatal("expected human config validate to fail with invalid config")
 	}
-	if code != exitSuccess {
-		t.Fatalf("expected success exit code for human config validate report, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code for human config validate report, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
 	assertContains(t, stdout, "status: invalid")
 	assertContains(t, stdout, "Check")
