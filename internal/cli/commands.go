@@ -228,7 +228,7 @@ func runConfigMigrationWithExistingConfig(cmd *cobra.Command, store profileStore
 		}}); renderErr != nil {
 			return renderErr
 		}
-		return renderedError{exitCode: exitUsageOrConfig, message: "profile config is not valid YAML", forceExit: true}
+		return renderedError{exitCode: exitUsageOrConfig, message: "profile config is not valid YAML"}
 	}
 
 	warnings := []warning{}
@@ -311,7 +311,7 @@ func runConfigRecoveryMigration(cmd *cobra.Command, store profileStore) error {
 		}}); renderErr != nil {
 			return renderErr
 		}
-		return renderedError{exitCode: exitSafetyDenied, message: message, forceExit: true}
+		return renderedError{exitCode: exitSafetyDenied, message: message}
 	}
 	return runConfigMigrationFromPath(cmd, store, store.backupPath, "recovered")
 }
@@ -949,7 +949,7 @@ func runAuthTest(cmd *cobra.Command, _ []string) error {
 			if failureMessage == "" {
 				failureMessage = "authentication response did not include a message"
 			}
-			return renderedError{exitCode: exitAuthFailure, message: failureMessage, forceExit: true}
+			return renderedError{exitCode: exitAuthFailure, message: failureMessage}
 		}
 		return nil
 	}
@@ -1069,7 +1069,7 @@ func runTransactionGet(cmd *cobra.Command, args []string) error {
 				data.Message = "transaction lookup failed"
 			}
 			_, exitCode := gatewayFailureMapping(data.GatewayMessageCode, data.Message, "transaction_not_found")
-			return renderedError{exitCode: exitCode, message: data.Message, forceExit: true}
+			return renderedError{exitCode: exitCode, message: data.Message}
 		}
 		return nil
 	}

@@ -20,7 +20,7 @@ func writeUsage(cmd *cobra.Command) error {
 	writeSubcommandHelpHint(&builder, cmd)
 	appendString(&builder, "\n")
 
-	_, err := fmt.Fprint(cmd.OutOrStderr(), builder.String())
+	_, err := fmt.Fprint(cmd.OutOrStdout(), builder.String())
 	return err
 }
 

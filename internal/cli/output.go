@@ -48,9 +48,8 @@ func (err exitingError) Unwrap() error {
 }
 
 type renderedError struct {
-	exitCode  ExitCode
-	message   string
-	forceExit bool
+	exitCode ExitCode
+	message  string
 }
 
 func (err renderedError) Error() string {

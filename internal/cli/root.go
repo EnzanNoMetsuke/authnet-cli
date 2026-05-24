@@ -133,7 +133,7 @@ func requireExactArgs(count int, placeholders ...string) cobra.PositionalArgs {
 }
 
 func missingArgumentMessage(cmd *cobra.Command, count int, placeholders []string) string {
-	commandPath := strings.TrimPrefix(cmd.CommandPath(), "authnet ")
+	commandPath := strings.TrimPrefix(cmd.CommandPath(), cmd.Root().Name()+" ")
 	if len(placeholders) == 0 {
 		return fmt.Sprintf("%s requires %d argument(s)", commandPath, count)
 	}

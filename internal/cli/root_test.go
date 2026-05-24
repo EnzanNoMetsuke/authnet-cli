@@ -685,6 +685,20 @@ func TestMissingRequiredArgumentsShowCommandUsage(t *testing.T) {
 	}
 }
 
+func TestMissingArgumentMessageDerivesRootPrefix(t *testing.T) {
+	root := NewRootCommand(BuildInfo{SchemaVersion: "0.1.0"})
+	root.Use = "anet"
+	cmd, _, err := root.Find([]string{"transaction", "get"})
+	if err != nil {
+		t.Fatalf("expected to find transaction get command: %v", err)
+	}
+
+	message := missingArgumentMessage(cmd, 1, []string{"<TRANSACTION_ID>"})
+	if message != "transaction get requires <TRANSACTION_ID>" {
+		t.Fatalf("expected root prefix to be removed, got %q", message)
+	}
+}
+
 func TestMissingRequiredArgumentsReturnStructuredJSONUsageFailure(t *testing.T) {
 	stdout, stderr, code, err := executeCommandWithExit("--json", "transaction", "get")
 	if err == nil {
