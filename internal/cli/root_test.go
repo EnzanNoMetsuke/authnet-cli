@@ -3067,6 +3067,41 @@ preferences:
 	assertNotContains(t, stdout, "\x1b[")
 }
 
+func TestJSONOverridesAutomationPreferenceAtHigherPrecedenceLayers(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	configText := `version: 1
+profiles: []
+preferences:
+  color: always
+  automation: always
+`
+	if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte(configText), 0o600); err != nil {
+		t.Fatalf("expected to write profile config fixture: %v", err)
+	}
+
+	stdout, stderr, err := executeCommand("--json", "version")
+	if err != nil {
+		t.Fatalf("expected explicit JSON flag to override automation preference: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stripANSI(stdout), `"command": "authnet version"`)
+	assertContains(t, stdout, "\x1b[")
+	if stderr != "" {
+		t.Fatalf("expected stderr to stay empty, got %q", stderr)
+	}
+
+	t.Setenv("AUTHNET_JSON", "true")
+	stdout, stderr, err = executeCommand("version")
+	if err != nil {
+		t.Fatalf("expected JSON environment override to override automation preference: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	assertContains(t, stripANSI(stdout), `"command": "authnet version"`)
+	assertContains(t, stdout, "\x1b[")
+	if stderr != "" {
+		t.Fatalf("expected stderr to stay empty, got %q", stderr)
+	}
+}
+
 func TestOutputModePreferenceConflictWarnsAndAutomationWins(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv(configEnvName, configDir)

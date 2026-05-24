@@ -217,9 +217,7 @@ func validateGlobalOptions(cmd *cobra.Command, config *cliConfig, options *globa
 	if err := validateOutputModePreferences(cmd, config); err != nil {
 		return err
 	}
-	if options.Automation {
-		options.JSON = true
-	}
+	applyOutputModeExclusivity(cmd, options)
 	if options.Environment != "" {
 		if err := validateEnvironment(options.Environment); err != nil {
 			return err
@@ -260,6 +258,36 @@ func validateGlobalOptions(cmd *cobra.Command, config *cliConfig, options *globa
 		}
 	}
 	return nil
+}
+
+func applyOutputModeExclusivity(cmd *cobra.Command, options *globalOptions) {
+	flags := cmd.Root().PersistentFlags()
+	if flags.Lookup(configKeyAutomation).Changed {
+		if options.Automation {
+			options.JSON = true
+		}
+		return
+	}
+	if flags.Lookup(configKeyJSON).Changed && options.JSON {
+		options.Automation = false
+		return
+	}
+
+	automationEnvSet, automationEnvValue := boolEnvironmentOverride("AUTHNET_AUTOMATION")
+	if automationEnvSet {
+		if automationEnvValue {
+			options.Automation = true
+			options.JSON = true
+			return
+		}
+	} else if jsonEnvSet, jsonEnvValue := boolEnvironmentOverride("AUTHNET_JSON"); jsonEnvSet && jsonEnvValue {
+		options.Automation = false
+		return
+	}
+
+	if options.Automation {
+		options.JSON = true
+	}
 }
 
 func commandSupportsRawResponse(cmd *cobra.Command) bool {
@@ -304,6 +332,18 @@ func validateOutputModeEnvironmentOverrides() error {
 		}
 	}
 	return nil
+}
+
+func boolEnvironmentOverride(name string) (bool, bool) {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return false, false
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return true, false
+	}
+	return true, parsed
 }
 
 func validateOutputModePreferences(cmd *cobra.Command, config *cliConfig) error {
