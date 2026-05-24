@@ -92,6 +92,7 @@ func renderResult(cmd *cobra.Command, result commandResult) error {
 	if options.JSON {
 		return writeOutputJSON(cmd.OutOrStdout(), newEnvelope(cmd, result.Data, result.Warnings, result.Errors, resultRedacted(result)), colorEnabled(options))
 	}
+	result.Warnings = appendGlobalWarnings(cmd, result.Warnings)
 	if result.Human == nil {
 		return nil
 	}
@@ -155,6 +156,7 @@ func writeHumanTable(writer io.Writer, headers []string, rows [][]string, color 
 
 func newEnvelope(cmd *cobra.Command, data any, warnings []warning, errs []structuredError, redacted bool) envelope {
 	options := optionsFromCommand(cmd)
+	warnings = appendGlobalWarnings(cmd, warnings)
 	if warnings == nil {
 		warnings = []warning{}
 	}
@@ -171,6 +173,17 @@ func newEnvelope(cmd *cobra.Command, data any, warnings []warning, errs []struct
 		Errors:                    errs,
 		Data:                      data,
 	}
+}
+
+func appendGlobalWarnings(cmd *cobra.Command, warnings []warning) []warning {
+	options := optionsFromCommand(cmd)
+	if len(options.PreferenceWarnings) == 0 {
+		return warnings
+	}
+	combined := make([]warning, 0, len(options.PreferenceWarnings)+len(warnings))
+	combined = append(combined, options.PreferenceWarnings...)
+	combined = append(combined, warnings...)
+	return combined
 }
 
 func writeJSON(writer io.Writer, value any) error {

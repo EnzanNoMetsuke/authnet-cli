@@ -154,10 +154,12 @@ authnet sandbox charge duplicate --amount 12.34 --window 120
 
 ## User Preferences
 
-Non-secret user preferences live in `config.yaml` under the resolved config directory shown by `authnet paths`. Supported preferences include default color behavior plus transaction list sorting and filtering:
+Non-secret user preferences live in `config.yaml` under the resolved config directory shown by `authnet paths`. Supported preferences include durable JSON/automation output modes, default color behavior, and transaction list sorting and filtering:
 
 ```yaml
 preferences:
+  json: never
+  automation: never
   color: auto
   transaction_list:
     sort_by: timestamp
@@ -167,6 +169,8 @@ preferences:
       amount: 1.23
       payment: Visa XXXX1111
 ```
+
+`preferences.json` and `preferences.automation` support `always` or `never`. Precedence is command-line flags, `AUTHNET_JSON` / `AUTHNET_AUTOMATION` boolean environment overrides, durable preferences, then built-in defaults. If both durable output preferences are `always`, automation takes precedence at the preference layer and every preference-reading command warns until one preference is removed.
 
 Supported color values are `auto`, `always`, and `never`. Transaction lists support `sort_by` values `timestamp`, `transaction_id`, and `amount`, plus `sort_order` values `ascending` and `descending`. They also support exact-match filters through `--status`, `--amount`, and `--payment`, or durable `preferences.transaction_list.filter.status`, `amount`, and `payment`. `AUTHNET_TX_SORT_BY`, `AUTHNET_TX_SORT_ORDER`, `AUTHNET_TX_FILTER_STATUS`, `AUTHNET_TX_FILTER_AMOUNT`, and `AUTHNET_TX_FILTER_PAYMENT` override transaction list preferences when flags are not provided. `--automation` always forces JSON output with no color.
 

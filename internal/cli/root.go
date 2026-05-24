@@ -24,14 +24,15 @@ const (
 )
 
 type globalOptions struct {
-	JSON        bool
-	Automation  bool
-	Yes         bool
-	Profile     string
-	Environment string
-	RawResponse bool
-	Color       string
-	NoColor     bool
+	JSON               bool
+	Automation         bool
+	Yes                bool
+	Profile            string
+	Environment        string
+	RawResponse        bool
+	Color              string
+	NoColor            bool
+	PreferenceWarnings []warning
 }
 
 // NewRootCommand builds the root authnet command with local-only scaffold behavior.
@@ -210,9 +211,13 @@ func validateGlobalOptions(cmd *cobra.Command, config *cliConfig, options *globa
 		}
 	}
 	config.applyGlobalOptions(options)
-	if options.Automation {
-		options.JSON = true
+	if err := validateOutputModeEnvironmentOverrides(); err != nil {
+		return err
 	}
+	if err := validateOutputModePreferences(cmd, config); err != nil {
+		return err
+	}
+	applyOutputModeExclusivity(cmd, options)
 	if options.Environment != "" {
 		if err := validateEnvironment(options.Environment); err != nil {
 			return err
@@ -241,6 +246,7 @@ func validateGlobalOptions(cmd *cobra.Command, config *cliConfig, options *globa
 		return err
 	}
 	if options.RawResponse {
+		options.PreferenceWarnings = append(options.PreferenceWarnings, config.rawResponsePreferenceWarnings()...)
 		if options.Environment == environmentProduction {
 			return newSafetyDeniedError(rawResponseProductionSafetyMessage)
 		}
@@ -252,6 +258,36 @@ func validateGlobalOptions(cmd *cobra.Command, config *cliConfig, options *globa
 		}
 	}
 	return nil
+}
+
+func applyOutputModeExclusivity(cmd *cobra.Command, options *globalOptions) {
+	flags := cmd.Root().PersistentFlags()
+	if flags.Lookup(configKeyAutomation).Changed {
+		if options.Automation {
+			options.JSON = true
+		}
+		return
+	}
+	if flags.Lookup(configKeyJSON).Changed && options.JSON {
+		options.Automation = false
+		return
+	}
+
+	automationEnvSet, automationEnvValue := boolEnvironmentOverride("AUTHNET_AUTOMATION")
+	if automationEnvSet {
+		if automationEnvValue {
+			options.Automation = true
+			options.JSON = true
+			return
+		}
+	} else if jsonEnvSet, jsonEnvValue := boolEnvironmentOverride("AUTHNET_JSON"); jsonEnvSet && jsonEnvValue {
+		options.Automation = false
+		return
+	}
+
+	if options.Automation {
+		options.JSON = true
+	}
 }
 
 func commandSupportsRawResponse(cmd *cobra.Command) bool {
@@ -283,6 +319,48 @@ func invalidColorValueError(cmd *cobra.Command, config *cliConfig, color string)
 		return newExitingUsageError("invalid preferences.color value %q in %s: expected auto, always, or never", color, config.colorPreferencePath)
 	}
 	return newUsageError("invalid --color value %q: expected auto, always, or never", color)
+}
+
+func validateOutputModeEnvironmentOverrides() error {
+	for _, envName := range []string{"AUTHNET_JSON", "AUTHNET_AUTOMATION"} {
+		value := strings.TrimSpace(os.Getenv(envName))
+		if value == "" {
+			continue
+		}
+		if _, err := strconv.ParseBool(value); err != nil {
+			return newUsageError("invalid %s value %q: expected true or false", envName, value)
+		}
+	}
+	return nil
+}
+
+func boolEnvironmentOverride(name string) (bool, bool) {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return false, false
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return true, false
+	}
+	return true, parsed
+}
+
+func validateOutputModePreferences(cmd *cobra.Command, config *cliConfig) error {
+	if cmd.CommandPath() == "authnet config validate" {
+		return nil
+	}
+	if config.jsonPreferenceSet && !validOutputModePreference(config.jsonPreferenceValue) {
+		return newExitingUsageError("invalid preferences.json value %q in %s: expected always or never", config.jsonPreferenceValue, config.configPath)
+	}
+	if config.automationPreferenceSet && !validOutputModePreference(config.automationPreferenceValue) {
+		return newExitingUsageError("invalid preferences.automation value %q in %s: expected always or never", config.automationPreferenceValue, config.configPath)
+	}
+	return nil
+}
+
+func validOutputModePreference(value string) bool {
+	return value == preferenceModeAlways || value == preferenceModeNever
 }
 
 func isColorEnvironmentOverrideSet() bool {

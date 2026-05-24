@@ -385,6 +385,26 @@ func validateProfileFile(file profileFile) validationResult {
 }
 
 func validatePreferences(result validationResult, preferences map[string]any) validationResult {
+	jsonPreference, ok := stringPreference(preferences, configKeyJSON)
+	if ok {
+		switch jsonPreference {
+		case preferenceModeAlways, preferenceModeNever:
+			result.Checks = append(result.Checks, checkRow{"preference json", "passed", "json output preference is valid"})
+		default:
+			result.Valid = false
+			result.Checks = append(result.Checks, checkRow{"preference json", "failed", fmt.Sprintf("invalid preference json %q: expected always or never", jsonPreference)})
+		}
+	}
+	automationPreference, ok := stringPreference(preferences, configKeyAutomation)
+	if ok {
+		switch automationPreference {
+		case preferenceModeAlways, preferenceModeNever:
+			result.Checks = append(result.Checks, checkRow{"preference automation", "passed", "automation output preference is valid"})
+		default:
+			result.Valid = false
+			result.Checks = append(result.Checks, checkRow{"preference automation", "failed", fmt.Sprintf("invalid preference automation %q: expected always or never", automationPreference)})
+		}
+	}
 	color, ok := stringPreference(preferences, preferenceKeyColor)
 	if ok {
 		switch color {

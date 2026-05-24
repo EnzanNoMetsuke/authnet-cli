@@ -61,6 +61,8 @@ authnet transaction get TRANSACTION_ID
 
 Commands outside that list fail clearly when `--raw-response` is provided. JSON raw-response output keeps the standard envelope, sets `redacted` to `false`, and places the unredacted gateway object in `data.raw_gateway_response`.
 
+If raw response mode runs while `preferences.json: never` or `preferences.automation: never` is configured, the CLI warns that those durable preferences are ignored so the raw gateway JSON can be presented accurately. Bare raw-response mode keeps stdout as the raw gateway JSON and writes warnings to stderr.
+
 ## Automation Boundary
 
 `--automation` implies JSON output, no color, no prompts, no TUI or wizard behavior, structured failures on stdout, and the exit-code taxonomy.
