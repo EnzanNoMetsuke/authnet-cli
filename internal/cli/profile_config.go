@@ -46,8 +46,9 @@ type profileStore struct {
 }
 
 type loadedProfileFile struct {
-	file profileFile
-	path string
+	file   profileFile
+	path   string
+	exists bool
 }
 
 type profileFile struct {
@@ -118,13 +119,13 @@ func (store profileStore) loadWithSource() (loadedProfileFile, error) {
 	if err := yaml.Unmarshal(data, &file); err != nil {
 		return loadedProfileFile{}, newUsageError("profile config is not valid YAML: %v", err)
 	}
-	return loadedProfileFile{file: normalizeProfileFile(file), path: store.path}, nil
+	return loadedProfileFile{file: normalizeProfileFile(file), path: store.path, exists: true}, nil
 }
 
 func (store profileStore) loadLegacyWithSource() (loadedProfileFile, error) {
 	data, err := os.ReadFile(store.legacyPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return loadedProfileFile{file: newProfileFile(), path: store.path}, nil
+		return loadedProfileFile{file: newProfileFile(), path: store.path, exists: false}, nil
 	}
 	if err != nil {
 		return loadedProfileFile{}, fmt.Errorf("read legacy profile config: %w", err)
@@ -134,7 +135,7 @@ func (store profileStore) loadLegacyWithSource() (loadedProfileFile, error) {
 	if err := json.Unmarshal(data, &file); err != nil {
 		return loadedProfileFile{}, newUsageError("legacy profile config is not valid JSON: %v", err)
 	}
-	return loadedProfileFile{file: normalizeProfileFile(file), path: store.legacyPath}, nil
+	return loadedProfileFile{file: normalizeProfileFile(file), path: store.legacyPath, exists: true}, nil
 }
 
 func newProfileFile() profileFile {

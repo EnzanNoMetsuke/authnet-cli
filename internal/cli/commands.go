@@ -117,8 +117,16 @@ func newConfigCommand() *cobra.Command {
 			file := loaded.file
 			result := validateProfileFile(file)
 			result.ConfigPath = loaded.path
+			if !loaded.exists {
+				result.Valid = false
+				result.Checks = append(result.Checks, checkRow{
+					Name:    "profile config",
+					Status:  "failed",
+					Message: "expected config.yaml was not found",
+				})
+			}
 			warnings := result.Warnings
-			if len(file.Profiles) == 0 {
+			if loaded.exists && len(file.Profiles) == 0 {
 				warnings = append(warnings, warning{
 					Code:    "no_profiles",
 					Message: "no profiles are configured.",
@@ -139,7 +147,11 @@ func newConfigCommand() *cobra.Command {
 					if !result.Valid {
 						status = "invalid"
 					}
-					if _, err := fmt.Fprintf(writer, "profile config: %s\nstatus: %s\nprofiles: %d\n", loaded.path, status, len(file.Profiles)); err != nil {
+					displayPath := loaded.path
+					if !loaded.exists {
+						displayPath += " (missing)"
+					}
+					if _, err := fmt.Fprintf(writer, "profile config: %s\nstatus: %s\nprofiles: %d\n", displayPath, status, len(file.Profiles)); err != nil {
 						return err
 					}
 					rows := make([][]string, 0, len(result.Checks))

@@ -4123,6 +4123,37 @@ preferences: {}
 	assertContains(t, stdout, `"config_path": "`+filepath.Join(configDir, profileConfigFileName)+`"`)
 }
 
+func TestConfigValidateRejectsMissingActiveConfig(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	if err := os.WriteFile(filepath.Join(configDir, deprecatedProfileConfigFileName), []byte(`{"profiles":[]}`), 0o600); err != nil {
+		t.Fatalf("expected to write deprecated profile config fixture: %v", err)
+	}
+
+	stdout, stderr, code, err := executeCommandWithExit("config", "validate")
+	if err == nil {
+		t.Fatal("expected config validate to fail without config.yaml or profiles.json")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, "profile config: "+filepath.Join(configDir, profileConfigFileName)+" (missing)")
+	assertContains(t, stdout, "status: invalid")
+	assertContains(t, stdout, "expected config.yaml was not found")
+	assertNotContains(t, stderr, "warning: no profiles are configured.")
+
+	stdout, stderr, code, err = executeCommandWithExit("--json", "config", "validate")
+	if err == nil {
+		t.Fatal("expected JSON config validate to fail without config.yaml or profiles.json")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertContains(t, stdout, `"code": "profile_config_invalid"`)
+	assertContains(t, stdout, `"config_path": "`+filepath.Join(configDir, profileConfigFileName)+`"`)
+	assertContains(t, stdout, "expected config.yaml was not found")
+}
+
 func TestInteractiveProfileSetupPromptsForMissingValues(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 
