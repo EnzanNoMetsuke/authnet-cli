@@ -526,15 +526,18 @@ func newTransactionCommand() *cobra.Command {
 	requireSubcommandFor(unsettled)
 	unsettledOptions := &transactionUnsettledListOptions{
 		Limit: defaultTransactionListLimit,
+		Page:  1,
 	}
 	unsettledList := &cobra.Command{
-		Use:   "list",
-		Short: "List unsettled transactions",
+		Use:         "list",
+		Short:       "List unsettled transactions",
+		Annotations: map[string]string{rawResponseSupportAnnotation: "supported"},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runTransactionUnsettledList(cmd, unsettledOptions)
 		},
 	}
 	unsettledList.Flags().IntVar(&unsettledOptions.Limit, "limit", defaultTransactionListLimit, "maximum transactions to return")
+	unsettledList.Flags().IntVar(&unsettledOptions.Page, "page", 1, "raw response page number to request")
 	unsettledList.Flags().BoolVar(&unsettledOptions.UTC, "utc", false, "show transaction timestamps in UTC")
 	unsettledList.Flags().StringVar(&unsettledOptions.SortBy, "sort-by", "", "sort transactions by timestamp, transaction_id, or amount")
 	unsettledList.Flags().StringVar(&unsettledOptions.SortOrder, "sort-order", "", "sort transactions ascending or descending")
@@ -754,6 +757,7 @@ type transactionListOptions struct {
 
 type transactionUnsettledListOptions struct {
 	Limit         int
+	Page          int
 	UTC           bool
 	SortBy        string
 	SortOrder     string
@@ -1001,7 +1005,7 @@ func runAuthTest(cmd *cobra.Command, _ []string) error {
 	})
 }
 
-func renderRawGatewayResponse(cmd *cobra.Command, rawResponse []byte) error {
+func renderRawGatewayResponse(cmd *cobra.Command, rawResponse []byte, warnings ...warning) error {
 	trimmed := bytes.TrimSpace(bytes.TrimPrefix(rawResponse, []byte("\xef\xbb\xbf")))
 	if len(trimmed) == 0 {
 		return cliError{
@@ -1022,10 +1026,13 @@ func renderRawGatewayResponse(cmd *cobra.Command, rawResponse []byte) error {
 			Data: rawGatewayResponseData{
 				RawGatewayResponse: json.RawMessage(trimmed),
 			},
+			Warnings: warnings,
 			Redacted: boolPointer(false),
 		})
 	}
-	if err := renderHumanWarnings(cmd.ErrOrStderr(), optionsFromCommand(cmd).PreferenceWarnings, colorEnabled(optionsFromCommand(cmd))); err != nil {
+	humanWarnings := append([]warning{}, optionsFromCommand(cmd).PreferenceWarnings...)
+	humanWarnings = append(humanWarnings, warnings...)
+	if err := renderHumanWarnings(cmd.ErrOrStderr(), humanWarnings, colorEnabled(optionsFromCommand(cmd))); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintln(cmd.OutOrStdout(), string(trimmed))
@@ -1211,17 +1218,56 @@ func runTransactionUnsettledList(cmd *cobra.Command, listOptions *transactionUns
 	if err != nil {
 		return err
 	}
-	filterOptions, err := resolveTransactionFilterOptions(cmd, listOptions.FilterStatus, listOptions.FilterAmount, listOptions.FilterPayment)
-	if err != nil {
-		return err
-	}
 
 	options := optionsFromCommand(cmd)
+	if !options.RawResponse && cmd.Flags().Lookup("page").Changed {
+		return newUsageError("--page is only supported with --raw-response for transaction unsettled list")
+	}
+	rawRequestOptions := gatewayUnsettledTransactionListRequestOptions{}
+	if options.RawResponse {
+		rawRequestOptions, err = resolveRawUnsettledTransactionListRequestOptions(cmd, listOptions, limit, sortOptions)
+		if err != nil {
+			return err
+		}
+	}
 	profile, err := loadSelectedProfileWithCredentials(options, "transaction unsettled list")
 	if err != nil {
 		return err
 	}
 	client, err := newGatewayClient(profile.Entry.Environment)
+	if err != nil {
+		return err
+	}
+	if options.RawResponse {
+		response, rawResponse, err := client.getUnsettledTransactionListRaw(cmd.Context(), profile.Credentials, rawRequestOptions)
+		if err != nil {
+			return err
+		}
+		warnings := []warning{}
+		if strings.EqualFold(response.Messages.ResultCode, "Ok") {
+			hasNextPage, err := rawUnsettledTransactionListHasNextPage(cmd, client, profile.Credentials, rawRequestOptions, len(response.Transactions))
+			if err != nil {
+				return err
+			}
+			if hasNextPage {
+				warnings = append(warnings, rawResponseMorePagesWarning(rawRequestOptions.Paging.Offset+1))
+			}
+		}
+		if renderErr := renderRawGatewayResponse(cmd, rawResponse, warnings...); renderErr != nil {
+			return renderErr
+		}
+		if !strings.EqualFold(response.Messages.ResultCode, "Ok") {
+			message := firstGatewayMessage(response.Messages.Message)
+			failureMessage := message.Text
+			if failureMessage == "" {
+				failureMessage = "unsettled transaction list failed"
+			}
+			_, exitCode := gatewayFailureMapping(message.Code, failureMessage, "gateway_failure")
+			return renderedError{exitCode: exitCode, message: failureMessage}
+		}
+		return nil
+	}
+	filterOptions, err := resolveTransactionFilterOptions(cmd, listOptions.FilterStatus, listOptions.FilterAmount, listOptions.FilterPayment)
 	if err != nil {
 		return err
 	}
@@ -1679,8 +1725,10 @@ func transactionListCanStopAfterFilteredLimit(items []transactionListItem, limit
 }
 
 type transactionSortOptions struct {
-	By    string
-	Order string
+	By          string
+	Order       string
+	BySource    string
+	OrderSource string
 }
 
 type transactionSortPreferences struct {
@@ -1697,9 +1745,12 @@ type transactionSortPreferences struct {
 }
 
 type transactionFilterOptions struct {
-	Status  string
-	Amount  string
-	Payment string
+	Status        string
+	StatusSource  string
+	Amount        string
+	AmountSource  string
+	Payment       string
+	PaymentSource string
 }
 
 func (options transactionFilterOptions) empty() bool {
@@ -1728,8 +1779,10 @@ func resolveTransactionSortOptions(cmd *cobra.Command, sortBy string, sortOrder 
 		return transactionSortOptions{}, err
 	}
 	options := transactionSortOptions{
-		By:    strings.TrimSpace(sortBy),
-		Order: strings.TrimSpace(sortOrder),
+		By:          strings.TrimSpace(sortBy),
+		Order:       strings.TrimSpace(sortOrder),
+		BySource:    sortBySource,
+		OrderSource: sortOrderSource,
 	}
 	switch options.By {
 	case "timestamp", "transaction_id", "amount":
@@ -1745,6 +1798,27 @@ func resolveTransactionSortOptions(cmd *cobra.Command, sortBy string, sortOrder 
 }
 
 func resolveTransactionFilterOptions(cmd *cobra.Command, status string, amount string, payment string) (transactionFilterOptions, error) {
+	options, err := resolveTransactionFilterValues(cmd, status, amount, payment)
+	if err != nil {
+		return transactionFilterOptions{}, err
+	}
+	if options.Status != "" && !validTransactionFilterStatus(options.Status) {
+		return transactionFilterOptions{}, invalidTransactionFilterStatusError(options.Status, options.StatusSource)
+	}
+	if options.Amount != "" {
+		normalized, err := normalizeTransactionFilterAmount(options.Amount)
+		if err != nil {
+			return transactionFilterOptions{}, invalidTransactionFilterAmountError(options.Amount, options.AmountSource)
+		}
+		options.Amount = normalized
+	}
+	if options.Payment != "" && !validTransactionFilterPayment(options.Payment) {
+		return transactionFilterOptions{}, invalidTransactionFilterPaymentError(options.Payment, options.PaymentSource)
+	}
+	return options, nil
+}
+
+func resolveTransactionFilterValues(cmd *cobra.Command, status string, amount string, payment string) (transactionFilterOptions, error) {
 	var preferences transactionSortPreferences
 	preferencesLoaded := false
 	loadPreferences := func() (transactionSortPreferences, error) {
@@ -1771,24 +1845,107 @@ func resolveTransactionFilterOptions(cmd *cobra.Command, status string, amount s
 	}
 
 	options := transactionFilterOptions{
-		Status:  strings.TrimSpace(resolvedStatus),
-		Amount:  strings.TrimSpace(resolvedAmount),
-		Payment: strings.TrimSpace(resolvedPayment),
-	}
-	if options.Status != "" && !validTransactionFilterStatus(options.Status) {
-		return transactionFilterOptions{}, invalidTransactionFilterStatusError(options.Status, statusSource)
-	}
-	if options.Amount != "" {
-		normalized, err := normalizeTransactionFilterAmount(options.Amount)
-		if err != nil {
-			return transactionFilterOptions{}, invalidTransactionFilterAmountError(options.Amount, amountSource)
-		}
-		options.Amount = normalized
-	}
-	if options.Payment != "" && !validTransactionFilterPayment(options.Payment) {
-		return transactionFilterOptions{}, invalidTransactionFilterPaymentError(options.Payment, paymentSource)
+		Status:        strings.TrimSpace(resolvedStatus),
+		StatusSource:  statusSource,
+		Amount:        strings.TrimSpace(resolvedAmount),
+		AmountSource:  amountSource,
+		Payment:       strings.TrimSpace(resolvedPayment),
+		PaymentSource: paymentSource,
 	}
 	return options, nil
+}
+
+func resolveRawUnsettledTransactionListRequestOptions(cmd *cobra.Command, listOptions *transactionUnsettledListOptions, limit int, sortOptions transactionSortOptions) (gatewayUnsettledTransactionListRequestOptions, error) {
+	if listOptions.Page < 1 {
+		return gatewayUnsettledTransactionListRequestOptions{}, newUsageError("--page must be at least 1")
+	}
+	filterOptions, err := resolveTransactionFilterValues(cmd, listOptions.FilterStatus, listOptions.FilterAmount, listOptions.FilterPayment)
+	if err != nil {
+		return gatewayUnsettledTransactionListRequestOptions{}, err
+	}
+	if err := validateRawUnsettledTransactionListControls(sortOptions, filterOptions); err != nil {
+		return gatewayUnsettledTransactionListRequestOptions{}, err
+	}
+
+	requestOptions := gatewayUnsettledTransactionListRequestOptions{
+		Sorting: &gatewaySorting{
+			OrderBy:         rawUnsettledTransactionListSortField(sortOptions.By),
+			OrderDescending: sortOptions.Order == "descending",
+		},
+		Paging: gatewayPaging{
+			Limit:  limit,
+			Offset: listOptions.Page,
+		},
+	}
+	if filterOptions.Status != "" {
+		requestOptions.Status = filterOptions.Status
+	}
+	return requestOptions, nil
+}
+
+func validateRawUnsettledTransactionListControls(sortOptions transactionSortOptions, filterOptions transactionFilterOptions) error {
+	if sortOptions.By == "amount" {
+		return unsupportedRawUnsettledTransactionListControlError(sortOptions.BySource, sortOptions.By, "amount sorting is not gateway-native")
+	}
+	if filterOptions.Status != "" {
+		switch filterOptions.Status {
+		case "any", "pendingApproval":
+		default:
+			return unsupportedRawUnsettledTransactionListControlError(filterOptions.StatusSource, filterOptions.Status, "only any and pendingApproval are gateway-native status values")
+		}
+	}
+	if filterOptions.Amount != "" {
+		return unsupportedRawUnsettledTransactionListControlError(filterOptions.AmountSource, filterOptions.Amount, "amount filtering requires normalized transaction output")
+	}
+	if filterOptions.Payment != "" {
+		return unsupportedRawUnsettledTransactionListControlError(filterOptions.PaymentSource, filterOptions.Payment, "payment filtering requires normalized transaction output")
+	}
+	return nil
+}
+
+func rawUnsettledTransactionListSortField(sortBy string) string {
+	switch sortBy {
+	case "transaction_id":
+		return "id"
+	default:
+		return "submitTimeUTC"
+	}
+}
+
+func unsupportedRawUnsettledTransactionListControlError(source string, value string, reason string) error {
+	return newUsageError("unsupported %s value %q in raw transaction unsettled list mode: %s; exact transaction-status, amount, and payment filtering remain available in normalized mode", source, value, reason)
+}
+
+func rawUnsettledTransactionListHasNextPage(cmd *cobra.Command, client gatewayClient, credentials authCredentials, requestOptions gatewayUnsettledTransactionListRequestOptions, selectedCount int) (bool, error) {
+	if selectedCount < requestOptions.Paging.Limit {
+		return false, nil
+	}
+	nextPageOptions := requestOptions
+	nextPageOptions.Paging.Offset++
+	response, _, err := client.getUnsettledTransactionListRaw(cmd.Context(), credentials, nextPageOptions)
+	if err != nil {
+		return false, err
+	}
+	if !strings.EqualFold(response.Messages.ResultCode, "Ok") {
+		message := firstGatewayMessage(response.Messages.Message)
+		if message.Text == "" {
+			message.Text = "next raw unsettled transaction page check failed"
+		}
+		_, exitCode := gatewayFailureMapping(message.Code, message.Text, "gateway_failure")
+		return false, cliError{
+			exitCode: exitCode,
+			code:     "gateway_failure",
+			message:  message.Text,
+		}
+	}
+	return len(response.Transactions) > 0, nil
+}
+
+func rawResponseMorePagesWarning(nextPage int) warning {
+	return warning{
+		Code:    "raw_response_more_pages",
+		Message: fmt.Sprintf("Another raw gateway page is available; rerun with --page %d and the same --limit and raw-mode controls to retrieve it.", nextPage),
+	}
 }
 
 func resolveTransactionFilterValue(cmd *cobra.Command, flagName string, flagValue string, envName string, loadPreferences func() (transactionSortPreferences, error)) (string, string, error) {

@@ -57,9 +57,12 @@ Supported raw-response commands:
 ```text
 authnet auth test
 authnet transaction get TRANSACTION_ID
+authnet transaction unsettled list
 ```
 
 Commands outside that list fail clearly when `--raw-response` is provided. JSON raw-response output keeps the standard envelope, sets `redacted` to `false`, and places the unredacted gateway object in `data.raw_gateway_response`.
+
+Raw unsettled transaction list mode emits one selected gateway page at a time. `--page` chooses the gateway page number, `--limit` chooses that page's gateway page size, and a later-page indication is emitted as a warning when another raw page exists. It supports only gateway-native sorting and filtering: `timestamp` or `transaction_id` sort fields, `ascending` or `descending` sort order, and `any` or `pendingApproval` status.
 
 If raw response mode runs while `preferences.json: never` or `preferences.automation: never` is configured, the CLI warns that those durable preferences are ignored so the raw gateway JSON can be presented accurately. Bare raw-response mode keeps stdout as the raw gateway JSON and writes warnings to stderr.
 
