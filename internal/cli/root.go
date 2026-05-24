@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -49,7 +50,9 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 		SilenceErrors: true,
 		Version:       build.Version,
 	}
+	requireSubcommandFor(root)
 	root.SetContext(ctx)
+	root.SetUsageFunc(writeUsage)
 	root.CompletionOptions.DisableDefaultCmd = true
 
 	root.SetVersionTemplate("authnet {{.Version}}\n")
@@ -86,6 +89,57 @@ func NewRootCommand(info BuildInfo) *cobra.Command {
 	return root
 }
 
+const requiresSubcommandAnnotation = "authnet.requires_subcommand"
+
+func requireSubcommandFor(cmd *cobra.Command) {
+	cmd.RunE = requireSubcommand
+	if cmd.Annotations == nil {
+		cmd.Annotations = map[string]string{}
+	}
+	cmd.Annotations[requiresSubcommandAnnotation] = "true"
+}
+
+func requireSubcommand(cmd *cobra.Command, _ []string) error {
+	message := cmd.CommandPath() + " requires a subcommand"
+	if optionsFromCommand(cmd).JSON {
+		return newUsageError("%s", message)
+	}
+	if err := cmd.Help(); err != nil {
+		return err
+	}
+	return renderedError{exitCode: exitUsageOrConfig, message: message}
+}
+
+func requireExactArgs(count int, placeholders ...string) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) == count {
+			return nil
+		}
+		message := missingArgumentMessage(cmd, count, placeholders)
+		if optionsFromCommand(cmd).JSON {
+			return newUsageError("%s", message)
+		}
+		if _, err := fmt.Fprintln(cmd.ErrOrStderr(), message); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(cmd.ErrOrStderr()); err != nil {
+			return err
+		}
+		if err := cmd.Usage(); err != nil {
+			return err
+		}
+		return renderedError{exitCode: exitUsageOrConfig, message: message}
+	}
+}
+
+func missingArgumentMessage(cmd *cobra.Command, count int, placeholders []string) string {
+	commandPath := strings.TrimPrefix(cmd.CommandPath(), cmd.Root().Name()+" ")
+	if len(placeholders) == 0 {
+		return fmt.Sprintf("%s requires %d argument(s)", commandPath, count)
+	}
+	return fmt.Sprintf("%s requires %s", commandPath, strings.Join(placeholders, " "))
+}
+
 // Execute runs the root command and returns the mapped process exit code.
 func Execute(command *cobra.Command) ExitCode {
 	return execute(command)
@@ -117,14 +171,10 @@ func execute(command *cobra.Command) ExitCode {
 			return exiting.exitCode
 		}
 		var rendered renderedError
-		if errors.As(err, &rendered) {
-			if rendered.forceExit {
-				return rendered.exitCode
-			}
-			return exitSuccess
+		if !errors.As(err, &rendered) {
+			_, _ = target.ErrOrStderr().Write([]byte(err.Error() + "\n"))
 		}
-		_, _ = target.ErrOrStderr().Write([]byte(err.Error() + "\n"))
-		return exitSuccess
+		return exitCodeForError(err)
 	}
 
 	var rendered renderedError

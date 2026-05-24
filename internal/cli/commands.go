@@ -96,6 +96,7 @@ func newConfigCommand() *cobra.Command {
 		Use:   "config",
 		Short: "Manage local non-secret profile config",
 	}
+	requireSubcommandFor(config)
 	config.AddCommand(&cobra.Command{
 		Use:   "migrate",
 		Short: "Migrate legacy profile config to config.yaml",
@@ -116,8 +117,16 @@ func newConfigCommand() *cobra.Command {
 			file := loaded.file
 			result := validateProfileFile(file)
 			result.ConfigPath = loaded.path
+			if !loaded.exists {
+				result.Valid = false
+				result.Checks = append(result.Checks, checkRow{
+					Name:    "profile config",
+					Status:  "failed",
+					Message: "expected config.yaml was not found",
+				})
+			}
 			warnings := result.Warnings
-			if len(file.Profiles) == 0 {
+			if loaded.exists && len(file.Profiles) == 0 {
 				warnings = append(warnings, warning{
 					Code:    "no_profiles",
 					Message: "no profiles are configured.",
@@ -138,7 +147,11 @@ func newConfigCommand() *cobra.Command {
 					if !result.Valid {
 						status = "invalid"
 					}
-					if _, err := fmt.Fprintf(writer, "profile config: %s\nstatus: %s\nprofiles: %d\n", loaded.path, status, len(file.Profiles)); err != nil {
+					displayPath := loaded.path
+					if !loaded.exists {
+						displayPath += " (missing)"
+					}
+					if _, err := fmt.Fprintf(writer, "profile config: %s\nstatus: %s\nprofiles: %d\n", displayPath, status, len(file.Profiles)); err != nil {
 						return err
 					}
 					rows := make([][]string, 0, len(result.Checks))
@@ -152,9 +165,6 @@ func newConfigCommand() *cobra.Command {
 				return renderErr
 			}
 			if !result.Valid {
-				if !optionsFromCommand(cmd).JSON {
-					return nil
-				}
 				return renderedError{exitCode: exitUsageOrConfig, message: "profile config validation failed"}
 			}
 			return nil
@@ -218,7 +228,7 @@ func runConfigMigrationWithExistingConfig(cmd *cobra.Command, store profileStore
 		}}); renderErr != nil {
 			return renderErr
 		}
-		return renderedError{exitCode: exitUsageOrConfig, message: "profile config is not valid YAML", forceExit: true}
+		return renderedError{exitCode: exitUsageOrConfig, message: "profile config is not valid YAML"}
 	}
 
 	warnings := []warning{}
@@ -301,7 +311,7 @@ func runConfigRecoveryMigration(cmd *cobra.Command, store profileStore) error {
 		}}); renderErr != nil {
 			return renderErr
 		}
-		return renderedError{exitCode: exitSafetyDenied, message: message, forceExit: true}
+		return renderedError{exitCode: exitSafetyDenied, message: message}
 	}
 	return runConfigMigrationFromPath(cmd, store, store.backupPath, "recovered")
 }
@@ -392,6 +402,7 @@ func newAuthCommand() *cobra.Command {
 		Use:   "auth",
 		Short: "Test Authorize.Net profile authentication",
 	}
+	requireSubcommandFor(auth)
 	auth.AddCommand(&cobra.Command{
 		Use:         "test",
 		Short:       "Test selected profile authentication",
@@ -406,6 +417,7 @@ func newProfileCommand() *cobra.Command {
 		Use:   "profile",
 		Short: "Manage local profiles",
 	}
+	requireSubcommandFor(profile)
 
 	list := &cobra.Command{
 		Use:   "list",
@@ -477,10 +489,11 @@ func newTransactionCommand() *cobra.Command {
 		Use:   "transaction",
 		Short: "Inspect Authorize.Net transactions",
 	}
+	requireSubcommandFor(transaction)
 	transaction.AddCommand(&cobra.Command{
-		Use:         "get TRANSACTION_ID",
+		Use:         "get <TRANSACTION_ID>",
 		Short:       "Inspect one transaction",
-		Args:        cobra.ExactArgs(1),
+		Args:        requireExactArgs(1, "<TRANSACTION_ID>"),
 		Annotations: map[string]string{rawResponseSupportAnnotation: "supported"},
 		RunE:        runTransactionGet,
 	})
@@ -510,6 +523,7 @@ func newTransactionCommand() *cobra.Command {
 		Use:   "unsettled",
 		Short: "Inspect unsettled transaction set",
 	}
+	requireSubcommandFor(unsettled)
 	unsettledOptions := &transactionUnsettledListOptions{
 		Limit: defaultTransactionListLimit,
 	}
@@ -538,11 +552,12 @@ func newCustomerProfileCommand() *cobra.Command {
 		Use:   "customer-profile",
 		Short: "Inspect Authorize.Net customer profiles",
 	}
+	requireSubcommandFor(customerProfile)
 	getOptions := &customerProfileGetOptions{}
 	get := &cobra.Command{
-		Use:   "get CUSTOMER_PROFILE_ID",
+		Use:   "get <CUSTOMER_PROFILE_ID>",
 		Short: "Inspect one customer profile",
-		Args:  cobra.ExactArgs(1),
+		Args:  requireExactArgs(1, "<CUSTOMER_PROFILE_ID>"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCustomerProfileGet(cmd, args, getOptions)
 		},
@@ -563,11 +578,12 @@ func newResponseCodeCommand() *cobra.Command {
 		Use:   "response-code",
 		Short: "Explain Authorize.Net response codes",
 	}
+	requireSubcommandFor(responseCode)
 	explainOptions := &responseCodeExplainOptions{}
 	explain := &cobra.Command{
-		Use:   "explain CODE",
+		Use:   "explain <CODE>",
 		Short: "Explain a gateway or API response code",
-		Args:  cobra.ExactArgs(1),
+		Args:  requireExactArgs(1, "<CODE>"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runResponseCodeExplain(cmd, args, explainOptions)
 		},
@@ -656,10 +672,12 @@ func newSandboxCommand() *cobra.Command {
 		Use:   "sandbox",
 		Short: "Run sandbox-only test helpers",
 	}
+	requireSubcommandFor(sandbox)
 	charge := &cobra.Command{
 		Use:   "charge",
 		Short: "Run sandbox card charge scenarios",
 	}
+	requireSubcommandFor(charge)
 	for _, scenario := range []string{"approved", "declined", "avs", "cvv", "duplicate"} {
 		options := sandboxChargeOptions{
 			Card:   defaultSandboxCardAlias,
@@ -931,7 +949,7 @@ func runAuthTest(cmd *cobra.Command, _ []string) error {
 			if failureMessage == "" {
 				failureMessage = "authentication response did not include a message"
 			}
-			return renderedError{exitCode: exitAuthFailure, message: failureMessage, forceExit: true}
+			return renderedError{exitCode: exitAuthFailure, message: failureMessage}
 		}
 		return nil
 	}
@@ -1051,7 +1069,7 @@ func runTransactionGet(cmd *cobra.Command, args []string) error {
 				data.Message = "transaction lookup failed"
 			}
 			_, exitCode := gatewayFailureMapping(data.GatewayMessageCode, data.Message, "transaction_not_found")
-			return renderedError{exitCode: exitCode, message: data.Message, forceExit: true}
+			return renderedError{exitCode: exitCode, message: data.Message}
 		}
 		return nil
 	}
