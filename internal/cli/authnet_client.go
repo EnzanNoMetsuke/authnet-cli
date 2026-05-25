@@ -187,13 +187,15 @@ type getSettledBatchListResponseEnvelope struct {
 }
 
 type getTransactionListResponseEnvelope struct {
-	Messages     gatewayMessages      `json:"messages"`
-	Transactions []gatewayTransaction `json:"transactions"`
+	Messages            gatewayMessages      `json:"messages"`
+	Transactions        []gatewayTransaction `json:"transactions"`
+	TotalNumInResultSet *int                 `json:"totalNumInResultSet"`
 }
 
 type getUnsettledTransactionListResponseEnvelope struct {
-	Messages     gatewayMessages      `json:"messages"`
-	Transactions []gatewayTransaction `json:"transactions"`
+	Messages            gatewayMessages      `json:"messages"`
+	Transactions        []gatewayTransaction `json:"transactions"`
+	TotalNumInResultSet *int                 `json:"totalNumInResultSet"`
 }
 
 type createTransactionResponseEnvelope struct {

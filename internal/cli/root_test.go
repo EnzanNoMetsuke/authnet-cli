@@ -1711,28 +1711,13 @@ func TestTransactionUnsettledListRawResponseUsesPageAndGatewayControls(t *testin
 				`"paging":`,
 			},
 			Body: `{
-				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
-				"transactions": [
-					{"transId": "9201", "transactionStatus": "pendingApproval", "submitTimeUTC": "2026-05-18T01:00:00Z"},
-					{"transId": "9202", "transactionStatus": "pendingApproval", "submitTimeUTC": "2026-05-18T02:00:00Z"}
-				]
-			}`,
-		},
-		{
-			Want: `"getUnsettledTransactionListRequest"`,
-			AlsoWant: []string{
-				`"status":"pendingApproval"`,
-				`"orderBy":"id"`,
-				`"orderDescending":false`,
-				`"limit":2`,
-				`"offset":3`,
-			},
-			Body: `{
-				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
-				"transactions": [
-					{"transId": "9301", "transactionStatus": "pendingApproval", "submitTimeUTC": "2026-05-18T03:00:00Z"}
-				]
-			}`,
+					"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+					"transactions": [
+						{"transId": "9201", "transactionStatus": "pendingApproval", "submitTimeUTC": "2026-05-18T01:00:00Z"},
+						{"transId": "9202", "transactionStatus": "pendingApproval", "submitTimeUTC": "2026-05-18T02:00:00Z"}
+					],
+					"totalNumInResultSet": 5
+				}`,
 		},
 	})
 	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
@@ -1754,6 +1739,81 @@ func TestTransactionUnsettledListRawResponseUsesPageAndGatewayControls(t *testin
 	assertContains(t, stdout, "--page 3")
 }
 
+func TestTransactionUnsettledListRawResponseUsesGatewayTotalForNoMorePages(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getUnsettledTransactionListRequest"`,
+			AlsoWant: []string{
+				`"limit":2`,
+				`"offset":1`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "9401", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-18T01:00:00Z"},
+					{"transId": "9402", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-18T02:00:00Z"}
+				],
+				"totalNumInResultSet": 2
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "--raw-response", "transaction", "unsettled", "list", "--limit", "2")
+	if err != nil {
+		t.Fatalf("expected raw unsettled transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"transId": "9401"`)
+	assertContains(t, stdout, `"transId": "9402"`)
+	assertNotContains(t, stdout, `"code": "raw_response_more_pages"`)
+	assertNotContains(t, stdout, "--page 2")
+}
+
+func TestTransactionUnsettledListRawResponseFallsBackToFullPageWarningWithoutGatewayTotal(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getUnsettledTransactionListRequest"`,
+			AlsoWant: []string{
+				`"limit":2`,
+				`"offset":1`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "9501", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-18T01:00:00Z"},
+					{"transId": "9502", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-18T02:00:00Z"}
+				]
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "--raw-response", "transaction", "unsettled", "list", "--limit", "2")
+	if err != nil {
+		t.Fatalf("expected raw unsettled transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"transId": "9501"`)
+	assertContains(t, stdout, `"transId": "9502"`)
+	assertContains(t, stdout, `"code": "raw_response_more_pages"`)
+	assertContains(t, stdout, "--page 2")
+}
+
 func TestTransactionUnsettledListRawResponseHumanMorePagesWarningUsesStderr(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 	t.Setenv(apiLoginIDEnvName, "secret-login")
@@ -1766,20 +1826,10 @@ func TestTransactionUnsettledListRawResponseHumanMorePagesWarningUsesStderr(t *t
 				`"offset":1`,
 			},
 			Body: `{
-				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
-				"transactions": [{"transId": "9101", "transactionStatus": "capturedPendingSettlement"}]
-			}`,
-		},
-		{
-			Want: `"getUnsettledTransactionListRequest"`,
-			AlsoWant: []string{
-				`"limit":1`,
-				`"offset":2`,
-			},
-			Body: `{
-				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
-				"transactions": [{"transId": "9102", "transactionStatus": "capturedPendingSettlement"}]
-			}`,
+					"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+					"transactions": [{"transId": "9101", "transactionStatus": "capturedPendingSettlement"}],
+					"totalNumInResultSet": 2
+				}`,
 		},
 	})
 	withGatewayTestEndpoint(t, environmentSandbox, server.URL)

@@ -1245,11 +1245,7 @@ func runTransactionUnsettledList(cmd *cobra.Command, listOptions *transactionUns
 		}
 		warnings := []warning{}
 		if strings.EqualFold(response.Messages.ResultCode, "Ok") {
-			hasNextPage, err := rawUnsettledTransactionListHasNextPage(cmd, client, profile.Credentials, rawRequestOptions, len(response.Transactions))
-			if err != nil {
-				return err
-			}
-			if hasNextPage {
+			if rawUnsettledTransactionListHasNextPage(response, rawRequestOptions) {
 				warnings = append(warnings, rawResponseMorePagesWarning(rawRequestOptions.Paging.Offset+1))
 			}
 		}
@@ -1916,29 +1912,19 @@ func unsupportedRawUnsettledTransactionListControlError(source string, value str
 	return newUsageError("unsupported %s value %q in raw transaction unsettled list mode: %s; exact transaction-status, amount, and payment filtering remain available in normalized mode", source, value, reason)
 }
 
-func rawUnsettledTransactionListHasNextPage(cmd *cobra.Command, client gatewayClient, credentials authCredentials, requestOptions gatewayUnsettledTransactionListRequestOptions, selectedCount int) (bool, error) {
-	if selectedCount < requestOptions.Paging.Limit {
-		return false, nil
+func rawUnsettledTransactionListHasNextPage(response getUnsettledTransactionListResponseEnvelope, requestOptions gatewayUnsettledTransactionListRequestOptions) bool {
+	if response.TotalNumInResultSet != nil {
+		return rawUnsettledTransactionListTotalHasNextPage(*response.TotalNumInResultSet, requestOptions.Paging)
 	}
-	nextPageOptions := requestOptions
-	nextPageOptions.Paging.Offset++
-	response, _, err := client.getUnsettledTransactionListRaw(cmd.Context(), credentials, nextPageOptions)
-	if err != nil {
-		return false, err
+	return len(response.Transactions) >= requestOptions.Paging.Limit
+}
+
+func rawUnsettledTransactionListTotalHasNextPage(total int, paging gatewayPaging) bool {
+	if total <= 0 || paging.Limit <= 0 || paging.Offset < 1 {
+		return false
 	}
-	if !strings.EqualFold(response.Messages.ResultCode, "Ok") {
-		message := firstGatewayMessage(response.Messages.Message)
-		if message.Text == "" {
-			message.Text = "next raw unsettled transaction page check failed"
-		}
-		_, exitCode := gatewayFailureMapping(message.Code, message.Text, "gateway_failure")
-		return false, cliError{
-			exitCode: exitCode,
-			code:     "gateway_failure",
-			message:  message.Text,
-		}
-	}
-	return len(response.Transactions) > 0, nil
+	pageCount := ((total - 1) / paging.Limit) + 1
+	return paging.Offset < pageCount
 }
 
 func rawResponseMorePagesWarning(nextPage int) warning {
