@@ -99,7 +99,7 @@ authnet --automation --raw-response --profile sandbox-main transaction get TRANS
 authnet --automation --raw-response --profile sandbox-main transaction unsettled list --limit 25 --page 1
 ```
 
-Those are the only supported raw-response commands. Other commands fail clearly when `--raw-response` is provided. Raw unsettled transaction list output returns one selected gateway page; `--page` chooses the gateway page number and `--limit` chooses that page's gateway page size. If another raw page exists, bare raw-response mode writes the indication to stderr, while JSON or automation mode carries it as a structured warning.
+Those are the only supported raw-response commands. Other commands fail clearly when `--raw-response` is provided. Raw unsettled transaction list output returns one selected gateway page; `--page` chooses the gateway page number and `--limit` chooses that page's gateway page size, up to 1000. If another raw page exists, bare raw-response mode writes the indication to stderr, while JSON or automation mode carries it as a structured warning.
 
 Raw unsettled mode supports gateway-native `--sort-by timestamp|transaction_id`, `--sort-order ascending|descending`, and `--status any|pendingApproval`. Amount sorting, exact transaction-status filtering, amount filtering, and payment filtering are available in normalized output only. If raw response mode runs while `preferences.json: never` or `preferences.automation: never` is configured, the CLI warns that those durable preferences are ignored so the gateway JSON can be presented accurately. Bare raw-response mode keeps stdout as the raw gateway JSON and writes warnings to stderr; JSON or automation raw-response mode carries warnings in the envelope.
 

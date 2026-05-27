@@ -1739,6 +1739,62 @@ func TestTransactionUnsettledListRawResponseUsesPageAndGatewayControls(t *testin
 	assertContains(t, stdout, "--page 3")
 }
 
+func TestTransactionUnsettledListRawResponseAllowsGatewayPageLimit(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getUnsettledTransactionListRequest"`,
+			AlsoWant: []string{
+				`"limit":1000`,
+				`"offset":1`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "9301", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-18T01:00:00Z"}
+				],
+				"totalNumInResultSet": 1
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "--raw-response", "transaction", "unsettled", "list", "--limit", "1000")
+	if err != nil {
+		t.Fatalf("expected raw unsettled transaction list to accept gateway page limit: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"raw_gateway_response": {`)
+	assertContains(t, stdout, `"transId": "9301"`)
+	assertNotContains(t, stdout, `"code": "raw_response_more_pages"`)
+}
+
+func TestTransactionUnsettledListRawResponseRejectsLimitAboveGatewayMaximum(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(environmentEnvName, environmentSandbox)
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+
+	stdout, stderr, code, err := executeCommandWithExit("--json", "--raw-response", "transaction", "unsettled", "list", "--limit", "1001")
+	if err == nil {
+		t.Fatal("expected raw unsettled transaction list limit above gateway maximum to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("expected JSON failure stderr to stay empty, got %q", stderr)
+	}
+	assertContains(t, stdout, `"code": "usage_or_config_error"`)
+	assertContains(t, stdout, `"message": "--limit must be at most 1000 in raw response mode"`)
+}
+
 func TestTransactionUnsettledListRawResponseUsesGatewayTotalForNoMorePages(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 	t.Setenv(apiLoginIDEnvName, "secret-login")

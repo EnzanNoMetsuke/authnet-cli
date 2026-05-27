@@ -21,6 +21,7 @@ import (
 const (
 	defaultTransactionListLimit     = 25
 	maxTransactionListLimit         = 100
+	maxRawUnsettledTransactionLimit = 1000
 	defaultTransactionLastRange     = "24h"
 	defaultTransactionSortBy        = "timestamp"
 	defaultTransactionSortOrder     = "descending"
@@ -1210,7 +1211,8 @@ func runTransactionList(cmd *cobra.Command, listOptions *transactionListOptions)
 }
 
 func runTransactionUnsettledList(cmd *cobra.Command, listOptions *transactionUnsettledListOptions) error {
-	limit, err := normalizedTransactionListLimit(listOptions.Limit)
+	options := optionsFromCommand(cmd)
+	limit, err := transactionUnsettledListLimit(listOptions.Limit, options.RawResponse)
 	if err != nil {
 		return err
 	}
@@ -1219,7 +1221,6 @@ func runTransactionUnsettledList(cmd *cobra.Command, listOptions *transactionUns
 		return err
 	}
 
-	options := optionsFromCommand(cmd)
 	if !options.RawResponse && cmd.Flags().Lookup("page").Changed {
 		return newUsageError("--page is only supported with --raw-response for transaction unsettled list")
 	}
@@ -1705,6 +1706,23 @@ func normalizedTransactionListLimit(limit int) (int, error) {
 	}
 	if limit > maxTransactionListLimit {
 		return 0, newUsageError("--limit must be at most %d", maxTransactionListLimit)
+	}
+	return limit, nil
+}
+
+func transactionUnsettledListLimit(limit int, rawResponse bool) (int, error) {
+	if rawResponse {
+		return rawUnsettledTransactionListLimit(limit)
+	}
+	return normalizedTransactionListLimit(limit)
+}
+
+func rawUnsettledTransactionListLimit(limit int) (int, error) {
+	if limit < 1 {
+		return 0, newUsageError("--limit must be at least 1")
+	}
+	if limit > maxRawUnsettledTransactionLimit {
+		return 0, newUsageError("--limit must be at most %d in raw response mode", maxRawUnsettledTransactionLimit)
 	}
 	return limit, nil
 }
