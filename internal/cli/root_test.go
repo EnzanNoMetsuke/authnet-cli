@@ -1795,7 +1795,7 @@ func TestTransactionUnsettledListRawResponseRejectsLimitAboveGatewayMaximum(t *t
 	assertContains(t, stdout, `"message": "--limit must be at most 1000 in raw response mode"`)
 }
 
-func TestTransactionUnsettledListRawResponseUsesGatewayTotalForNoMorePages(t *testing.T) {
+func TestTransactionUnsettledListRawResponseWarnsOnFullPageEvenWithGatewayTotal(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 	t.Setenv(apiLoginIDEnvName, "secret-login")
 	t.Setenv(transactionKeyEnvName, "secret-key")
@@ -1829,11 +1829,12 @@ func TestTransactionUnsettledListRawResponseUsesGatewayTotalForNoMorePages(t *te
 
 	assertContains(t, stdout, `"transId": "9401"`)
 	assertContains(t, stdout, `"transId": "9402"`)
-	assertNotContains(t, stdout, `"code": "raw_response_more_pages"`)
-	assertNotContains(t, stdout, "--page 2")
+	assertContains(t, stdout, `"code": "raw_response_more_pages"`)
+	assertContains(t, stdout, "Another raw gateway page may be available")
+	assertContains(t, stdout, "--page 2")
 }
 
-func TestTransactionUnsettledListRawResponseFallsBackToFullPageWarningWithoutGatewayTotal(t *testing.T) {
+func TestTransactionUnsettledListRawResponseWarnsOnFullPageWithoutGatewayTotal(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 	t.Setenv(apiLoginIDEnvName, "secret-login")
 	t.Setenv(transactionKeyEnvName, "secret-key")
@@ -1867,6 +1868,7 @@ func TestTransactionUnsettledListRawResponseFallsBackToFullPageWarningWithoutGat
 	assertContains(t, stdout, `"transId": "9501"`)
 	assertContains(t, stdout, `"transId": "9502"`)
 	assertContains(t, stdout, `"code": "raw_response_more_pages"`)
+	assertContains(t, stdout, "Another raw gateway page may be available")
 	assertContains(t, stdout, "--page 2")
 }
 
@@ -1902,7 +1904,7 @@ func TestTransactionUnsettledListRawResponseHumanMorePagesWarningUsesStderr(t *t
 	assertContains(t, stdout, `"transId": "9101"`)
 	assertNotContains(t, stdout, `"transId": "9102"`)
 	assertNotContains(t, stdout, "warning:")
-	assertContains(t, stderr, "warning: Another raw gateway page is available")
+	assertContains(t, stderr, "warning: Another raw gateway page may be available")
 	assertContains(t, stderr, "--page 2")
 }
 

@@ -1246,7 +1246,7 @@ func runTransactionUnsettledList(cmd *cobra.Command, listOptions *transactionUns
 		}
 		warnings := []warning{}
 		if strings.EqualFold(response.Messages.ResultCode, "Ok") {
-			if rawUnsettledTransactionListHasNextPage(response, rawRequestOptions) {
+			if rawUnsettledTransactionListMayHaveNextPage(response, rawRequestOptions) {
 				warnings = append(warnings, rawResponseMorePagesWarning(rawRequestOptions.Paging.Offset+1))
 			}
 		}
@@ -1930,25 +1930,17 @@ func unsupportedRawUnsettledTransactionListControlError(source string, value str
 	return newUsageError("unsupported %s value %q in raw transaction unsettled list mode: %s; exact transaction-status, amount, and payment filtering remain available in normalized mode", source, value, reason)
 }
 
-func rawUnsettledTransactionListHasNextPage(response getUnsettledTransactionListResponseEnvelope, requestOptions gatewayUnsettledTransactionListRequestOptions) bool {
-	if response.TotalNumInResultSet != nil {
-		return rawUnsettledTransactionListTotalHasNextPage(*response.TotalNumInResultSet, requestOptions.Paging)
-	}
-	return len(response.Transactions) >= requestOptions.Paging.Limit
-}
-
-func rawUnsettledTransactionListTotalHasNextPage(total int, paging gatewayPaging) bool {
-	if total <= 0 || paging.Limit <= 0 || paging.Offset < 1 {
+func rawUnsettledTransactionListMayHaveNextPage(response getUnsettledTransactionListResponseEnvelope, requestOptions gatewayUnsettledTransactionListRequestOptions) bool {
+	if requestOptions.Paging.Limit <= 0 {
 		return false
 	}
-	pageCount := ((total - 1) / paging.Limit) + 1
-	return paging.Offset < pageCount
+	return len(response.Transactions) >= requestOptions.Paging.Limit
 }
 
 func rawResponseMorePagesWarning(nextPage int) warning {
 	return warning{
 		Code:    "raw_response_more_pages",
-		Message: fmt.Sprintf("Another raw gateway page is available; rerun with --page %d and the same --limit and raw-mode controls to retrieve it.", nextPage),
+		Message: fmt.Sprintf("Another raw gateway page may be available; rerun with --page %d and the same --limit and raw-mode controls to retrieve it.", nextPage),
 	}
 }
 
