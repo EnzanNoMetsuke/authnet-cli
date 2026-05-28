@@ -139,9 +139,10 @@ Raw gateway response output is sandbox-only and explicit. Supported commands are
 ```sh
 authnet --raw-response --profile sandbox-main auth test
 authnet --raw-response --profile sandbox-main transaction get TRANSACTION_ID
+authnet --raw-response --profile sandbox-main transaction unsettled list --limit 25 --page 1
 ```
 
-Production profiles and unsupported commands are denied before raw gateway output is emitted.
+Production profiles and unsupported commands are denied before raw gateway output is emitted. Raw unsettled transaction list output returns one gateway page at a time. Use `--page` to request another raw page; `--limit` is the gateway page size, up to 1000. Raw unsettled mode supports gateway-native `--sort-by timestamp|transaction_id`, `--sort-order ascending|descending`, and `--status any|pendingApproval`. Amount sorting, exact transaction-status filtering, amount filtering, and payment filtering remain normalized-mode features.
 
 Sandbox charge helpers are sandbox-only and use test-card aliases instead of raw card-number entry:
 

@@ -95,6 +95,8 @@ type getUnsettledTransactionListRequestEnvelope struct {
 
 type getUnsettledTransactionListRequest struct {
 	MerchantAuthentication merchantAuthentication `json:"merchantAuthentication"`
+	Status                 string                 `json:"status,omitempty"`
+	Sorting                *gatewaySorting        `json:"sorting,omitempty"`
 	Paging                 gatewayPaging          `json:"paging"`
 }
 
@@ -149,6 +151,17 @@ type gatewayPaging struct {
 	Offset int `json:"offset"`
 }
 
+type gatewaySorting struct {
+	OrderBy         string `json:"orderBy"`
+	OrderDescending bool   `json:"orderDescending"`
+}
+
+type gatewayUnsettledTransactionListRequestOptions struct {
+	Status  string
+	Sorting *gatewaySorting
+	Paging  gatewayPaging
+}
+
 type authenticateTestResponseEnvelope struct {
 	Messages gatewayMessages `json:"messages"`
 }
@@ -174,13 +187,15 @@ type getSettledBatchListResponseEnvelope struct {
 }
 
 type getTransactionListResponseEnvelope struct {
-	Messages     gatewayMessages      `json:"messages"`
-	Transactions []gatewayTransaction `json:"transactions"`
+	Messages            gatewayMessages      `json:"messages"`
+	Transactions        []gatewayTransaction `json:"transactions"`
+	TotalNumInResultSet *int                 `json:"totalNumInResultSet"`
 }
 
 type getUnsettledTransactionListResponseEnvelope struct {
-	Messages     gatewayMessages      `json:"messages"`
-	Transactions []gatewayTransaction `json:"transactions"`
+	Messages            gatewayMessages      `json:"messages"`
+	Transactions        []gatewayTransaction `json:"transactions"`
+	TotalNumInResultSet *int                 `json:"totalNumInResultSet"`
 }
 
 type createTransactionResponseEnvelope struct {
@@ -484,29 +499,38 @@ func (client gatewayClient) getTransactionList(ctx context.Context, credentials 
 }
 
 func (client gatewayClient) getUnsettledTransactionList(ctx context.Context, credentials authCredentials, paging gatewayPaging) (getUnsettledTransactionListResponseEnvelope, error) {
+	parsed, _, err := client.getUnsettledTransactionListRaw(ctx, credentials, gatewayUnsettledTransactionListRequestOptions{
+		Paging: paging,
+	})
+	return parsed, err
+}
+
+func (client gatewayClient) getUnsettledTransactionListRaw(ctx context.Context, credentials authCredentials, options gatewayUnsettledTransactionListRequestOptions) (getUnsettledTransactionListResponseEnvelope, []byte, error) {
 	requestBody := getUnsettledTransactionListRequestEnvelope{
 		Request: getUnsettledTransactionListRequest{
 			MerchantAuthentication: merchantAuthentication{
 				Name:           credentials.APILoginID,
 				TransactionKey: credentials.TransactionKey,
 			},
-			Paging: paging,
+			Status:  options.Status,
+			Sorting: options.Sorting,
+			Paging:  options.Paging,
 		},
 	}
 	responseBody, err := client.post(ctx, requestBody, "unsettled transaction list")
 	if err != nil {
-		return getUnsettledTransactionListResponseEnvelope{}, err
+		return getUnsettledTransactionListResponseEnvelope{}, nil, err
 	}
 
 	var parsed getUnsettledTransactionListResponseEnvelope
 	if err := decodeGatewayJSON(responseBody, &parsed); err != nil {
-		return getUnsettledTransactionListResponseEnvelope{}, cliError{
+		return getUnsettledTransactionListResponseEnvelope{}, nil, cliError{
 			exitCode: exitGatewayFailure,
 			code:     "gateway_response_invalid",
 			message:  "Authorize.Net returned an invalid unsettled transaction list response",
 		}
 	}
-	return parsed, nil
+	return parsed, responseBody, nil
 }
 
 func (client gatewayClient) createTransaction(ctx context.Context, credentials authCredentials, transaction gatewayTransactionRequest) (createTransactionResponseEnvelope, error) {

@@ -1653,6 +1653,376 @@ func TestTransactionGetRawResponsePreservesNotFoundExit(t *testing.T) {
 	assertNotContains(t, stdout, `"code": "transaction_not_found"`)
 }
 
+func TestTransactionUnsettledListRawResponseEmitsSandboxGatewayPage(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getUnsettledTransactionListRequest"`,
+			AlsoWant: []string{
+				`"limit":3`,
+				`"offset":1`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "9001", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-18T01:00:00Z", "customer": {"email": "customer@example.test"}}
+				]
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "--raw-response", "transaction", "unsettled", "list", "--limit", "3")
+	if err != nil {
+		t.Fatalf("expected raw unsettled transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"command": "authnet transaction unsettled list"`)
+	assertContains(t, stdout, `"redacted": false`)
+	assertContains(t, stdout, `"raw_gateway_response": {`)
+	assertContains(t, stdout, `"transId": "9001"`)
+	assertContains(t, stdout, `"email": "customer@example.test"`)
+	assertNotContains(t, stdout, `"returned_count"`)
+}
+
+func TestTransactionUnsettledListRawResponseUsesPageAndGatewayControls(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getUnsettledTransactionListRequest"`,
+			AlsoWant: []string{
+				`"status":"pendingApproval"`,
+				`"orderBy":"id"`,
+				`"orderDescending":false`,
+				`"limit":2`,
+				`"offset":2`,
+			},
+			WantOrder: []string{
+				`"status":"pendingApproval"`,
+				`"sorting":`,
+				`"paging":`,
+			},
+			Body: `{
+					"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+					"transactions": [
+						{"transId": "9201", "transactionStatus": "pendingApproval", "submitTimeUTC": "2026-05-18T01:00:00Z"},
+						{"transId": "9202", "transactionStatus": "pendingApproval", "submitTimeUTC": "2026-05-18T02:00:00Z"}
+					],
+					"totalNumInResultSet": 5
+				}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "--raw-response", "transaction", "unsettled", "list", "--limit", "2", "--page", "2", "--sort-by", "transaction_id", "--sort-order", "ascending", "--status", "pendingApproval")
+	if err != nil {
+		t.Fatalf("expected raw unsettled transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"raw_gateway_response": {`)
+	assertContains(t, stdout, `"transId": "9201"`)
+	assertContains(t, stdout, `"transId": "9202"`)
+	assertNotContains(t, stdout, `"transId": "9301"`)
+	assertContains(t, stdout, `"code": "raw_response_more_pages"`)
+	assertContains(t, stdout, "--page 3")
+}
+
+func TestTransactionUnsettledListRawResponseAllowsGatewayPageLimit(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getUnsettledTransactionListRequest"`,
+			AlsoWant: []string{
+				`"limit":1000`,
+				`"offset":1`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "9301", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-18T01:00:00Z"}
+				],
+				"totalNumInResultSet": 1
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "--raw-response", "transaction", "unsettled", "list", "--limit", "1000")
+	if err != nil {
+		t.Fatalf("expected raw unsettled transaction list to accept gateway page limit: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"raw_gateway_response": {`)
+	assertContains(t, stdout, `"transId": "9301"`)
+	assertNotContains(t, stdout, `"code": "raw_response_more_pages"`)
+}
+
+func TestTransactionUnsettledListRawResponseRejectsLimitAboveGatewayMaximum(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(environmentEnvName, environmentSandbox)
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+
+	stdout, stderr, code, err := executeCommandWithExit("--json", "--raw-response", "transaction", "unsettled", "list", "--limit", "1001")
+	if err == nil {
+		t.Fatal("expected raw unsettled transaction list limit above gateway maximum to fail")
+	}
+	if code != exitUsageOrConfig {
+		t.Fatalf("expected usage/config exit, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("expected JSON failure stderr to stay empty, got %q", stderr)
+	}
+	assertContains(t, stdout, `"code": "usage_or_config_error"`)
+	assertContains(t, stdout, `"message": "--limit must be at most 1000 in raw response mode"`)
+}
+
+func TestTransactionUnsettledListRawResponseWarnsOnFullPageEvenWithGatewayTotal(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getUnsettledTransactionListRequest"`,
+			AlsoWant: []string{
+				`"limit":2`,
+				`"offset":1`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "9401", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-18T01:00:00Z"},
+					{"transId": "9402", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-18T02:00:00Z"}
+				],
+				"totalNumInResultSet": 2
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "--raw-response", "transaction", "unsettled", "list", "--limit", "2")
+	if err != nil {
+		t.Fatalf("expected raw unsettled transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"transId": "9401"`)
+	assertContains(t, stdout, `"transId": "9402"`)
+	assertContains(t, stdout, `"code": "raw_response_more_pages"`)
+	assertContains(t, stdout, "Another raw gateway page may be available")
+	assertContains(t, stdout, "--page 2")
+}
+
+func TestTransactionUnsettledListRawResponseWarnsOnFullPageWithoutGatewayTotal(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getUnsettledTransactionListRequest"`,
+			AlsoWant: []string{
+				`"limit":2`,
+				`"offset":1`,
+			},
+			Body: `{
+				"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+				"transactions": [
+					{"transId": "9501", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-18T01:00:00Z"},
+					{"transId": "9502", "transactionStatus": "capturedPendingSettlement", "submitTimeUTC": "2026-05-18T02:00:00Z"}
+				]
+			}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--json", "--raw-response", "transaction", "unsettled", "list", "--limit", "2")
+	if err != nil {
+		t.Fatalf("expected raw unsettled transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"transId": "9501"`)
+	assertContains(t, stdout, `"transId": "9502"`)
+	assertContains(t, stdout, `"code": "raw_response_more_pages"`)
+	assertContains(t, stdout, "Another raw gateway page may be available")
+	assertContains(t, stdout, "--page 2")
+}
+
+func TestTransactionUnsettledListRawResponseHumanMorePagesWarningUsesStderr(t *testing.T) {
+	t.Setenv(configEnvName, t.TempDir())
+	t.Setenv(apiLoginIDEnvName, "secret-login")
+	t.Setenv(transactionKeyEnvName, "secret-key")
+	server := newReportingTestServer(t, []reportingResponse{
+		{
+			Want: `"getUnsettledTransactionListRequest"`,
+			AlsoWant: []string{
+				`"limit":1`,
+				`"offset":1`,
+			},
+			Body: `{
+					"messages": {"resultCode": "Ok", "message": [{"code": "I00001", "text": "Successful."}]},
+					"transactions": [{"transId": "9101", "transactionStatus": "capturedPendingSettlement"}],
+					"totalNumInResultSet": 2
+				}`,
+		},
+	})
+	withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "sandbox-main", "--environment", "sandbox", "--default")
+	if err != nil {
+		t.Fatalf("expected profile setup to succeed: %v", err)
+	}
+	stdout, stderr, err := executeCommand("--raw-response", "transaction", "unsettled", "list", "--limit", "1")
+	if err != nil {
+		t.Fatalf("expected raw unsettled transaction list to succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	assertContains(t, stdout, `"transId": "9101"`)
+	assertNotContains(t, stdout, `"transId": "9102"`)
+	assertNotContains(t, stdout, "warning:")
+	assertContains(t, stderr, "warning: Another raw gateway page may be available")
+	assertContains(t, stderr, "--page 2")
+}
+
+func TestTransactionUnsettledListRawResponseProductionProfileIsDeniedBeforeGatewayRequest(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(configEnvName, configDir)
+	t.Setenv(apiLoginIDEnvName, "prod-login")
+	t.Setenv(transactionKeyEnvName, "prod-key")
+	var called atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		called.Store(true)
+	}))
+	t.Cleanup(server.Close)
+	withGatewayTestEndpoint(t, environmentProduction, server.URL)
+
+	_, _, err := executeCommand("--automation", "profile", "setup", "--name", "prod-main", "--environment", "production")
+	if err != nil {
+		t.Fatalf("expected production profile setup to succeed: %v", err)
+	}
+
+	stdout, stderr, code, err := executeCommandWithExit("--json", "--raw-response", "--profile", "prod-main", "transaction", "unsettled", "list")
+	if err == nil {
+		t.Fatal("expected production raw-response unsettled list to fail")
+	}
+	if code != exitSafetyDenied {
+		t.Fatalf("expected safety denied exit code, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if called.Load() {
+		t.Fatal("production raw-response unsettled list unexpectedly contacted gateway")
+	}
+	assertContains(t, stdout, `"code": "safety_policy_denied"`)
+	assertContains(t, stdout, "raw response mode is unavailable for production-classified profiles")
+}
+
+func TestTransactionUnsettledListRawResponseRejectsUnsupportedControls(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		env         map[string]string
+		preferences string
+		want        []string
+	}{
+		{
+			name: "flag amount sort",
+			args: []string{"--sort-by", "amount"},
+			want: []string{`unsupported --sort-by value \"amount\" in raw transaction unsettled list mode`, "normalized mode"},
+		},
+		{
+			name: "flag exact transaction status",
+			args: []string{"--status", "declined"},
+			want: []string{`unsupported --status value \"declined\" in raw transaction unsettled list mode`, "any and pendingApproval"},
+		},
+		{
+			name: "environment amount filter",
+			env: map[string]string{
+				transactionFilterAmountEnvName: "12.30",
+			},
+			want: []string{`unsupported AUTHNET_TX_FILTER_AMOUNT value \"12.30\" in raw transaction unsettled list mode`, "normalized mode"},
+		},
+		{
+			name:        "preference payment filter",
+			preferences: "transaction_list:\n    filter:\n      payment: Visa XXXX1111\n",
+			want:        []string{"unsupported preferences.transaction_list.filter.payment", `value \"Visa XXXX1111\"`, "normalized mode"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			configDir := t.TempDir()
+			t.Setenv(configEnvName, configDir)
+			t.Setenv(apiLoginIDEnvName, "secret-login")
+			t.Setenv(transactionKeyEnvName, "secret-key")
+			for name, value := range test.env {
+				t.Setenv(name, value)
+			}
+			if test.preferences == "" {
+				writeValidProfileConfig(t, configDir)
+			} else {
+				configText := fmt.Sprintf(`version: 1
+default_profile: sandbox-main
+profiles:
+  - name: sandbox-main
+    environment: sandbox
+    credential_source:
+      type: env
+      api_login_id_env: AUTHNET_API_LOGIN_ID
+      transaction_key_env: AUTHNET_TRANSACTION_KEY
+preferences:
+  %s`, test.preferences)
+				if err := os.WriteFile(filepath.Join(configDir, profileConfigFileName), []byte(configText), 0o600); err != nil {
+					t.Fatalf("expected to write profile config fixture: %v", err)
+				}
+			}
+			var called atomic.Bool
+			server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				called.Store(true)
+			}))
+			t.Cleanup(server.Close)
+			withGatewayTestEndpoint(t, environmentSandbox, server.URL)
+
+			args := append([]string{"--json", "--raw-response", "transaction", "unsettled", "list"}, test.args...)
+			stdout, stderr, code, err := executeCommandWithExit(args...)
+			if err == nil {
+				t.Fatal("expected unsupported raw unsettled list control to fail")
+			}
+			if code != exitUsageOrConfig {
+				t.Fatalf("expected usage/config exit, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+			}
+			if called.Load() {
+				t.Fatal("unsupported raw unsettled list control unexpectedly contacted gateway")
+			}
+			for _, want := range test.want {
+				assertContains(t, stdout, want)
+			}
+		})
+	}
+}
+
 func TestTransactionGetUsesProductionEndpointForExplicitProductionProfile(t *testing.T) {
 	t.Setenv(configEnvName, t.TempDir())
 	t.Setenv(apiLoginIDEnvName, "secret-login")
@@ -4687,9 +5057,10 @@ func newCustomerProfileListTestServer(t *testing.T, status int, responseBody str
 }
 
 type reportingResponse struct {
-	Want     string
-	AlsoWant []string
-	Body     string
+	Want      string
+	AlsoWant  []string
+	WantOrder []string
+	Body      string
 }
 
 type sandboxRequestExpectation struct {
@@ -4770,6 +5141,18 @@ func newReportingTestServer(t *testing.T, responses []reportingResponse) *httpte
 			if !strings.Contains(text, want) {
 				t.Errorf("expected request body to contain %s, got %s", want, text)
 			}
+		}
+		previousIndex := -1
+		for _, want := range response.WantOrder {
+			index := strings.Index(text, want)
+			if index < 0 {
+				t.Errorf("expected request body to contain ordered token %s, got %s", want, text)
+				continue
+			}
+			if index <= previousIndex {
+				t.Errorf("expected request body token %s after previous ordered token, got %s", want, text)
+			}
+			previousIndex = index
 		}
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusOK)

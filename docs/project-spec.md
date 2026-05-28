@@ -130,9 +130,12 @@ Raw response mode:
 - Supported by:
   - `authnet auth test`
   - `authnet transaction get TRANSACTION_ID`
+  - `authnet transaction unsettled list`
 - Unsupported commands fail clearly when `--raw-response` is provided.
 - JSON raw-response output uses the standard envelope with `redacted: false` and `data.raw_gateway_response`.
 - If `--raw-response` is used while durable JSON or automation preferences are `never`, the CLI warns that those preferences are ignored so raw gateway JSON is presented accurately.
+- Raw unsettled transaction list output emits one selected `getUnsettledTransactionListResponse` page at a time. `--page` chooses the gateway page number, `--limit` chooses the selected page's gateway page size up to 1000, and a later-page indication is emitted as a warning when another raw page exists.
+- Raw unsettled transaction list mode maps `--sort-by timestamp` to gateway `submitTimeUTC`, `--sort-by transaction_id` to gateway `id`, `--sort-order ascending|descending` to gateway sort direction, and `--status any|pendingApproval` to gateway status. Amount sorting, exact transaction-status filtering, amount filtering, and payment filtering fail clearly in raw mode and remain available in normalized mode.
 
 Dry-run mode:
 
